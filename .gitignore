@@ -1,0 +1,5 @@
+node_modules/
+dist/
+ministry/keys/
+l2-verifier-mock/data/
+*.js.map

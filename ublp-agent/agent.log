@@ -1,0 +1,31 @@
+[UBLP Agent] ✓ UBLP Agent — http://localhost:3002
+[UBLP Agent] İmzalı belge alındı. ID: DOC-1781975786258
+[UBLP Agent] Bakanlık imzası doğrulanıyor...
+[UBLP Agent] ✓ Bakanlık imzası doğrulandı. Poseidon2 hash üretiliyor...
+[UBLP Agent] Hash üretildi (SHA-256/mock): dd5af009d90293a7460f8030e5229f7646f702d81ce746fa08e53cc2819a31b4
+[UBLP Agent] Mock ZK Proof üretiliyor...
+[UBLP Agent] ZK Proof üretildi: {
+  "status": "verified",
+  "constraints_passed": true,
+  "signature_valid": true,
+  "timestamp": 1781975786334,
+  "proof_system": "mock-sha256",
+  "public_inputs_hash": "49ff9ec4ade73bf41e9fd9492ec54b679bccbdb213ad2c5ccba667e1b3b9869b"
+}
+[UBLP Agent] L2 Verifier'a gönderiliyor → http://localhost:3003
+[UBLP Agent] ✓ L2 Verifier onayladı: {
+  status: 'ONAYLANDI',
+  record: {
+    documentHash: 'dd5af009d90293a7460f8030e5229f7646f702d81ce746fa08e53cc2819a31b4',
+    status: 'ONAYLANDI',
+    settledAt: '2026-06-20T17:16:26.368Z',
+    proof: {
+      status: 'verified',
+      constraints_passed: true,
+      signature_valid: true,
+      timestamp: 1781975786334,
+      proof_system: 'mock-sha256',
+      public_inputs_hash: '49ff9ec4ade73bf41e9fd9492ec54b679bccbdb213ad2c5ccba667e1b3b9869b'
+    }
+  }
+}

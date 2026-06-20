@@ -1,0 +1,23 @@
+{
+  "name": "ublp",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "shared",
+    "ministry",
+    "ublp-agent",
+    "l2-verifier-mock",
+    "customs-broker"
+  ],
+  "scripts": {
+    "build:shared": "npm run build -w shared",
+    "start:ministry": "npm run start -w ministry",
+    "start:agent": "npm run start -w ublp-agent",
+    "start:l2": "npm run start -w l2-verifier-mock",
+    "run:broker": "npm run start -w customs-broker",
+    "dev": "concurrently \"npm run start:ministry\" \"npm run start:agent\" \"npm run start:l2\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
