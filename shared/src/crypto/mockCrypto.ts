@@ -48,6 +48,10 @@ export interface PrivateInputs {
   rawDocument: Record<string, unknown>;
   salt: string;
   signature: string;
+  // K-3: holder auth — circuit private inputs, never exposed to L2
+  holderSignature?: string;  // base64 IEEE P1363
+  holderPublicKey?: string;  // PEM SPKI
+  holderDid?: string;        // UTF-8 — payload binder
 }
 
 export interface PublicInputs {
@@ -70,6 +74,11 @@ export interface ZKProof {
    * SP1 modunda: Groth16/PLONK proof bytes (base64)
    */
   ministrySignature: string;
+  /**
+   * K-3: SHA256(holderPubKeyRaw) — SP1 modunda circuit 4. output; mock modunda lokal hesaplanır.
+   * Ham holder public key veya imzası asla L2'ye gitmez.
+   */
+  holderPubKeyHash: string;
 }
 
 // ─── Canonical Serialization ──────────────────────────────────────────────────
@@ -223,6 +232,29 @@ export function generateMockZKProof(
     publicInputs.documentIdHash
   );
 
+  // K-3: holder auth — lokal doğrula, sadece hash VP'ye gider, ham key/sig asla
+  let holderPubKeyHash = '';
+  if (privateInputs.holderSignature && privateInputs.holderPublicKey && privateInputs.holderDid) {
+    const payloadHex = holderProofHash(
+      publicInputs.documentHash,
+      publicInputs.documentIdHash,
+      privateInputs.holderDid
+    );
+    const payload = Buffer.from(payloadHex, 'hex');
+    const holderSigValid = crypto.verify(
+      null,
+      payload,
+      { key: privateInputs.holderPublicKey, dsaEncoding: 'ieee-p1363' },
+      Buffer.from(privateInputs.holderSignature, 'base64')
+    );
+    if (!holderSigValid) throw new Error('Mock ZK: holder imzası geçersiz.');
+
+    const pubKeyDer = crypto.createPublicKey(privateInputs.holderPublicKey)
+      .export({ type: 'spki', format: 'der' }) as Buffer;
+    const pubKeyRaw = pubKeyDer.subarray(pubKeyDer.length - 65);
+    holderPubKeyHash = crypto.createHash('sha256').update(pubKeyRaw).digest('hex');
+  }
+
   return {
     status: signatureValid ? 'verified' : 'failed',
     constraints_passed: signatureValid,
@@ -231,6 +263,7 @@ export function generateMockZKProof(
     proof_system: 'mock-ecdsa-p256',
     public_inputs_hash: poseidon2Hash(canonicalJson(publicInputs)),
     ministrySignature: privateInputs.signature,
+    holderPubKeyHash,
   };
 }
 
@@ -248,12 +281,20 @@ export async function generateZKProof(
 ): Promise<ZKProof> {
   if (sp1Available()) {
     console.log('[ZK] SP1 prover network kullanılıyor...');
+    if (!privateInputs.holderSignature || !privateInputs.holderPublicKey || !privateInputs.holderDid) {
+      throw new Error('SP1 modu: holder auth (holderSignature, holderPublicKey, holderDid) zorunlu.');
+    }
+
     const docCanonical = canonicalJson(privateInputs.rawDocument);
     const result = await generateSP1Proof({
       documentCanonicalJson: docCanonical,
       ministrySignature: privateInputs.signature,
       ministryPublicKey: publicInputs.ministryPublicKey,
       documentIdHash: publicInputs.documentIdHash,
+      // K-3: circuit private inputs — SP1 network'e gider, L2'ye asla dönmez
+      holderSignature: privateInputs.holderSignature,
+      holderPublicKey: privateInputs.holderPublicKey,
+      holderDid: privateInputs.holderDid,
     });
 
     if (result.publicValues.documentHash !== publicInputs.documentHash) {
@@ -278,9 +319,11 @@ export async function generateZKProof(
       public_inputs_hash: poseidon2Hash(
         result.publicValues.documentHash +
         result.publicValues.pubKeyHash +
-        result.publicValues.documentIdHash
+        result.publicValues.documentIdHash +
+        result.publicValues.holderPubKeyHash
       ),
       ministrySignature: result.proofBytes,
+      holderPubKeyHash: result.publicValues.holderPubKeyHash,
     };
   }
 

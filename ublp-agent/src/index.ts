@@ -40,9 +40,10 @@ async function loadOrGenerateAgentKeys(): Promise<KeyPair> {
 }
 
 /**
- * K-3 fix: Agent VP'yi kendi P-256 anahtarıyla imzalar.
+ * K-3: Agent VP'yi kendi P-256 anahtarıyla imzalar.
  * Payload = SHA256(documentHash || documentIdHash || holderDid)
- * L2 bu imzayı holder DID'ine bağlı anahtarla doğrular.
+ * Bu imza ZK circuit'e private input olarak gider — L2'ye asla dönmez.
+ * L2 yalnızca circuit'in commit ettiği holderPubKeyHash'i görür.
  */
 function signHolderProof(
   documentHash: string,
@@ -140,11 +141,26 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
       }
       console.log('[UBLP Agent] ✓ VC imzası geçerli.');
 
-      // ── 2. ZK Proof üret ─────────────────────────────────────────────────────
+      // ── 2. K-3: Holder imzası hesapla — ZK circuit private input'u ─────────
+      // Payload = SHA256(documentHash || documentIdHash || holderDid)
+      // Bu imza ZK'ya private input olarak gider; VP'ye ham olarak konmaz.
+      const holderSignature = signHolderProof(
+        cs.documentHash,
+        cs.documentIdHash,
+        holderDid,
+        agentKeys.privateKey
+      );
+      console.log('[UBLP Agent] Holder imzası üretildi (ZK private input).');
+
+      // ── 3. ZK Proof üret — holder auth circuit constraint olarak gömülür ────
       const privateInputs: PrivateInputs = {
         rawDocument,
         salt: '',
         signature: vcProof.proofValue,
+        // K-3: circuit'e private input — L2'ye dönmez
+        holderSignature,
+        holderPublicKey: agentKeys.publicKey,
+        holderDid,
       };
       const publicInputs: PublicInputs = {
         documentHash: cs.documentHash,
@@ -152,11 +168,12 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
         documentIdHash: cs.documentIdHash,
       };
 
-      console.log('[UBLP Agent] ZK Proof üretiliyor...');
+      console.log('[UBLP Agent] ZK Proof üretiliyor (holder auth circuit içinde)...');
       const zkProof = await generateZKProof(privateInputs, publicInputs);
       console.log('[UBLP Agent] ZK Proof üretildi. system:', zkProof.proof_system);
+      console.log('[UBLP Agent] holderPubKeyHash:', zkProof.holderPubKeyHash.slice(0, 16) + '…');
 
-      // ── 3. AÇIK-2 fix: VP için rawDocument'siz VC kopyası ───────────────────
+      // ── 4. AÇIK-2 fix: VP için rawDocument'siz VC kopyası ───────────────────
       const vcForVP: UBLPVerifiableCredential = {
         ...vc,
         credentialSubject: {
@@ -168,24 +185,16 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
         },
       };
 
-      // ── 4. pubKeyHash hesapla — circuit ile aynı: SHA256(uncompressed P-256 raw 65 bytes)
-      // SP1 modunda bu değer circuit output'tan gelir; mock modda agent hesaplar.
+      // ── 5. pubKeyHash: SHA256(ministry uncompressed P-256 raw 65 bytes) ─────
+      // SP1 modunda circuit'ten gelir; mock modda agent hesaplar.
       const pubKeyDer = crypto.createPublicKey(vcProof.ministryPublicKey)
         .export({ type: 'spki', format: 'der' }) as Buffer;
-      const pubKeyRaw = pubKeyDer.slice(-65); // 04 || x || y — uncompressed SEC1
+      const pubKeyRaw = pubKeyDer.subarray(pubKeyDer.length - 65);
       const pubKeyHash = crypto.createHash('sha256').update(pubKeyRaw).digest('hex');
 
-      // ── 5. K-3 fix: Holder VP imzası — payload = SHA256(docHash||idHash||holderDid) ──
-      // Payload = SHA256(documentHash || documentIdHash || holderDid)
-      // L2 bu imzayı holderPublicKey ile doğrular; holderDid değiştirilirse kırılır.
-      const holderSignature = signHolderProof(
-        cs.documentHash,
-        cs.documentIdHash,
-        holderDid,
-        agentKeys.privateKey
-      );
-
-      // ── 5. Verifiable Presentation ───────────────────────────────────────────
+      // ── 6. Verifiable Presentation ───────────────────────────────────────────
+      // K-3 fix: holderSignature ve holderPublicKey VP'ye GİRMEZ.
+      // L2 yalnızca circuit'in commit ettiği holderPubKeyHash'i görür.
       const presentation: UBLPVerifiablePresentation = {
         '@context': [
           'https://www.w3.org/2018/credentials/v1',
@@ -203,15 +212,14 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
             documentHash: cs.documentHash,
             pubKeyHash,
             documentIdHash: cs.documentIdHash,
+            holderPubKeyHash: zkProof.holderPubKeyHash, // hash only — never raw key
           },
           proofBytes: zkProof.ministrySignature,
           ministryPublicKey: vcProof.ministryPublicKey,
-          holderSignature,
-          holderPublicKey: agentKeys.publicKey,
         },
       };
 
-      // ── 6. L2'ye gönder ──────────────────────────────────────────────────────
+      // ── 7. L2'ye gönder ──────────────────────────────────────────────────────
       console.log('[UBLP Agent] VP L2\'ye gönderiliyor →', L2_VERIFIER_URL);
 
       let l2Response: Response;
