@@ -168,7 +168,14 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
         },
       };
 
-      // ── 4. K-3 fix: Holder VP imzası ─────────────────────────────────────────
+      // ── 4. pubKeyHash hesapla — circuit ile aynı: SHA256(uncompressed P-256 raw 65 bytes)
+      // SP1 modunda bu değer circuit output'tan gelir; mock modda agent hesaplar.
+      const pubKeyDer = crypto.createPublicKey(vcProof.ministryPublicKey)
+        .export({ type: 'spki', format: 'der' }) as Buffer;
+      const pubKeyRaw = pubKeyDer.slice(-65); // 04 || x || y — uncompressed SEC1
+      const pubKeyHash = crypto.createHash('sha256').update(pubKeyRaw).digest('hex');
+
+      // ── 5. K-3 fix: Holder VP imzası — payload = SHA256(docHash||idHash||holderDid) ──
       // Payload = SHA256(documentHash || documentIdHash || holderDid)
       // L2 bu imzayı holderPublicKey ile doğrular; holderDid değiştirilirse kırılır.
       const holderSignature = signHolderProof(
@@ -194,7 +201,7 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
           proofSystem: zkProof.proof_system,
           publicValues: {
             documentHash: cs.documentHash,
-            pubKeyHash: '',
+            pubKeyHash,
             documentIdHash: cs.documentIdHash,
           },
           proofBytes: zkProof.ministrySignature,
