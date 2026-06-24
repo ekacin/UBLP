@@ -1,45 +1,53 @@
 /**
- * UBLP Committee Service — Eşik İmza Servisi (Threshold ECDSA)
+ * UBLP Committee Service — BLS12-381 Eşik İmza Servisi
  *
  * Mimari:
  *   Bakanlık belgeyi imzaladıktan sonra VC'yi doğrudan agent'a dönmez.
- *   Önce bu servise POST eder; kurul üyeleri bağımsız olarak onaylarsa
- *   CommitteeAttestation üretilir ve VC'ye eklenir.
+ *   Önce bu servise POST eder; kurul üyeleri BLS12-381 ile imzalar,
+ *   aggregate signature üretilir ve CommitteeAttestation olarak döner.
  *
- *   Oyun teorisi: Üyeler (gümrük, ithalatçı, ihracatçı) birbiriyle
- *   çelişen çıkarlara sahiptir. Dürüst kalmak her biri için dominant
- *   stratejidir — diğer üyeler hileyi raporlayabilir, itibar kaybı
- *   ekonomik kazancı geçer.
+ * BLS Avantajı:
+ *   n ayrı ECDSA imzası yerine tek bir aggregate BLS imzası + aggregate pubkey.
+ *   t-of-n: signerIds'ten L2 kendi stored pubkey'lerini kullanır (attestation'a güvenmez).
  *
- * Üyeler:
- *   did:ublp:committee:customs-authority  — devlet / gümrük
- *   did:ublp:committee:importer-chamber   — ithalatçı
- *   did:ublp:committee:exporter-union     — ihracatçı
+ * K-2 fix:
+ *   groupKeyHash = SHA256(sorted ALL n member BLS pubkeys) — statik.
+ *   Attestation sadece hangi t üyenin imzaladığını (signerIds) taşır.
+ *   L2 kendi member listesinden pubkey lookup yapar.
  *
- * Eşik: 3/3 (mock; production'da 2/3 + BLS aggregation)
+ * Oyun teorisi: customs-authority, importer-chamber, exporter-union — çelişen çıkarlar.
+ * Dürüst kalmak her biri için dominant strateji (diğerleri hileyi raporlar).
  *
+ * Eşik: 2/3 (t=2, n=3)
  * API:
- *   POST /api/attest       — belge için kurul imzası al
- *   GET  /api/info         — groupKeyHash + üye bilgileri
+ *   POST /api/attest  — belge için BLS eşik imzası üret
+ *   GET  /api/info    — groupKeyHash + üye BLS pubkey'leri (L2 senkronizasyonu için)
  */
 
 import Fastify from 'fastify';
-import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { combinedSignatureHash, CommitteeAttestation, CommitteeMemberSig } from '@ublp/shared';
+import {
+  blsGenerateKeyPair,
+  blsSign,
+  blsAggregateSignatures,
+  blsGroupKeyHash,
+  combinedSignatureHash,
+  CommitteeAttestation,
+  BLSKeyPair,
+} from '@ublp/shared';
 
 const app = Fastify({ logger: false });
 const MEMBERS_PATH = path.join(__dirname, '..', 'data', 'members.json');
 const PORT = parseInt(process.env.COMMITTEE_PORT ?? '3004', 10);
-const THRESHOLD = 2; // t-of-n
+const THRESHOLD = 2; // t-of-n: 2/3
 
-// ─── Üye Yapısı ───────────────────────────────────────────────────────────────
+// ─── Üye Tanımları ────────────────────────────────────────────────────────────
 
 interface CommitteeMember {
   memberId: string;
-  privateKey: string;
-  publicKey: string;
+  privateKey: string; // hex BLS private key
+  publicKey: string;  // hex BLS G1 compressed pubkey (48 bytes)
 }
 
 const MEMBER_IDS = [
@@ -50,56 +58,40 @@ const MEMBER_IDS = [
 
 // ─── Key Yönetimi ─────────────────────────────────────────────────────────────
 
-function generateMember(memberId: string): CommitteeMember {
-  const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', {
-    namedCurve: 'P-256',
-    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
-    publicKeyEncoding: { type: 'spki', format: 'pem' },
-  });
-  return { memberId, privateKey, publicKey };
-}
-
 async function loadOrGenerateMembers(): Promise<CommitteeMember[]> {
   if (fs.existsSync(MEMBERS_PATH)) {
     const raw = await fs.promises.readFile(MEMBERS_PATH, 'utf-8');
-    console.log('[Committee] Mevcut üye anahtarları yüklendi.');
+    console.log('[Committee] Mevcut BLS üye anahtarları yüklendi.');
     return JSON.parse(raw) as CommitteeMember[];
   }
-  console.log('[Committee] Yeni üye anahtar çiftleri üretiliyor...');
-  const members = MEMBER_IDS.map(generateMember);
+  console.log('[Committee] Yeni BLS12-381 anahtar çiftleri üretiliyor...');
+  const members: CommitteeMember[] = MEMBER_IDS.map((memberId) => {
+    const kp: BLSKeyPair = blsGenerateKeyPair();
+    return { memberId, privateKey: kp.privateKey, publicKey: kp.publicKey };
+  });
   await fs.promises.mkdir(path.dirname(MEMBERS_PATH), { recursive: true });
   await fs.promises.writeFile(MEMBERS_PATH, JSON.stringify(members, null, 2), 'utf-8');
   return members;
 }
 
-function computeGroupKeyHash(members: CommitteeMember[]): string {
-  // SHA256(sorted public key'lerin birleşimi) — L2 bu değeri startup'ta senkronize eder
-  const sorted = [...members].sort((a, b) => a.memberId.localeCompare(b.memberId));
-  const joined = sorted.map((m) => m.publicKey).join('');
-  return crypto.createHash('sha256').update(joined).digest('hex');
-}
-
-function signCombined(member: CommitteeMember, combinedHashHex: string): string {
-  const hashBytes = Buffer.from(combinedHashHex, 'hex');
-  return crypto
-    .sign(null, hashBytes, { key: member.privateKey, dsaEncoding: 'ieee-p1363' })
-    .toString('base64');
-}
-
 // ─── Server ───────────────────────────────────────────────────────────────────
 
 async function buildServer(members: CommitteeMember[]): Promise<void> {
-  const groupKeyHash = computeGroupKeyHash(members);
+  // K-2 fix: groupKeyHash = SHA256(sorted ALL n member pubkeys) — statik, değişmez
+  const groupKeyHash = blsGroupKeyHash(members.map((m) => m.publicKey));
 
-  console.log('[Committee] groupKeyHash:', groupKeyHash);
+  console.log('[Committee] BLS groupKeyHash:', groupKeyHash.slice(0, 16) + '…');
   console.log('[Committee] Üyeler:', members.map((m) => m.memberId).join(', '));
 
   // ── GET /api/info ──────────────────────────────────────────────────────────
+  // L2 bu endpoint'ten groupKeyHash + member BLS pubkey'leri alır.
+  // Böylece L2 attestation doğrulamasında kendi deposundan pubkey lookup yapabilir.
   app.get('/api/info', async () => ({
+    type: 'BLSThreshold',
     groupKeyHash,
     threshold: THRESHOLD,
     totalMembers: members.length,
-    members: members.map((m) => ({ memberId: m.memberId, publicKey: m.publicKey })),
+    members: members.map((m) => ({ memberId: m.memberId, blsPublicKey: m.publicKey })),
   }));
 
   // ── POST /api/attest ───────────────────────────────────────────────────────
@@ -125,27 +117,45 @@ async function buildServer(members: CommitteeMember[]): Promise<void> {
     async (request, reply) => {
       const { documentHash, documentIdHash } = request.body;
 
-      // Birleşik hash — her üye bunu imzalar (bakanlık imzasıyla aynı preimage)
-      const combined = combinedSignatureHash(documentHash, documentIdHash);
+      // Mesaj: combinedSignatureHash — bakanlık imzasıyla aynı preimage
+      const msgHex = combinedSignatureHash(documentHash, documentIdHash);
 
-      const signatures: CommitteeMemberSig[] = members.map((member) => ({
-        memberId: member.memberId,
-        publicKey: member.publicKey,
-        signature: signCombined(member, combined),
-      }));
+      // Her üye BLS imzalar (mock: tüm üyeler çevrimiçi, production'da t-of-n subset)
+      const partialSigs: string[] = [];
+      const signerIds: string[] = [];
+
+      for (const member of members) {
+        try {
+          const sig = await blsSign(msgHex, member.privateKey);
+          partialSigs.push(sig);
+          signerIds.push(member.memberId);
+        } catch (err) {
+          console.warn(`[Committee] ⚠ Üye imzalayamadı: ${member.memberId}`, err);
+        }
+      }
+
+      if (partialSigs.length < THRESHOLD) {
+        return reply.status(503).send({
+          error: `Eşik sağlanamadı: ${partialSigs.length}/${THRESHOLD} üye imzaladı.`,
+        });
+      }
+
+      // BLS aggregate — t (veya daha fazla) kısmi imzadan tek aggregate sig
+      const aggregatedSignature = blsAggregateSignatures(partialSigs);
 
       const attestation: CommitteeAttestation = {
-        type: 'ThresholdECDSA',
+        type: 'BLSThreshold',
         threshold: THRESHOLD,
         totalMembers: members.length,
         groupKeyHash,
-        signatures,
+        signerIds,
+        aggregatedSignature,
         attestedAt: new Date().toISOString(),
       };
 
       console.log(
         `[COMMITTEE] Threshold signature aggregated. ` +
-        `docHash=${documentHash.slice(0, 8)}… signer_count=${signatures.length}`
+        `docHash=${documentHash.slice(0, 8)}… signers=${signerIds.length}/${members.length}`
       );
 
       return reply.status(200).send(attestation);
@@ -159,8 +169,8 @@ const start = async (): Promise<void> => {
   const members = await loadOrGenerateMembers();
   await buildServer(members);
   await app.listen({ port: PORT, host: '0.0.0.0' });
-  console.log(`[Committee] ✓ Committee Threshold Service — http://localhost:${PORT}`);
-  console.log(`[Committee] Threshold: ${THRESHOLD}/${members.length}`);
+  console.log(`[Committee] ✓ BLS12-381 Threshold Committee — http://localhost:${PORT}`);
+  console.log(`[Committee] Threshold: ${THRESHOLD}/${MEMBER_IDS.length}`);
 };
 
 start().catch((err) => {

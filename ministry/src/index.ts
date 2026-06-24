@@ -160,7 +160,7 @@ async function buildServer(keys: KeyPair): Promise<typeof app> {
       console.log('[Ministry] Kurul onayı isteniyor →', COMMITTEE_URL);
       const committeeAttestation = await requestCommitteeAttestation(documentHash, documentIdHash);
       console.log(
-        `[Ministry] ✓ Kurul onayı alındı. signer_count=${committeeAttestation.signatures.length}`
+        `[Ministry] ✓ Kurul onayı alındı. signer_count=${committeeAttestation.signerIds.length}`
       );
 
       const vc: UBLPVerifiableCredential = {
