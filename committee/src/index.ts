@@ -61,8 +61,14 @@ const MEMBER_IDS = [
 async function loadOrGenerateMembers(): Promise<CommitteeMember[]> {
   if (fs.existsSync(MEMBERS_PATH)) {
     const raw = await fs.promises.readFile(MEMBERS_PATH, 'utf-8');
-    console.log('[Committee] Mevcut BLS üye anahtarları yüklendi.');
-    return JSON.parse(raw) as CommitteeMember[];
+    const stored = JSON.parse(raw) as CommitteeMember[];
+    // BLS private key = 32-byte hex (64 chars). Old ECDSA keys are PEM → regenerate.
+    const isBLS = stored.every((m) => /^[0-9a-f]{64}$/i.test(m.privateKey));
+    if (isBLS) {
+      console.log('[Committee] Mevcut BLS üye anahtarları yüklendi.');
+      return stored;
+    }
+    console.warn('[Committee] Eski format anahtar tespit edildi — BLS anahtarları yeniden üretiliyor...');
   }
   console.log('[Committee] Yeni BLS12-381 anahtar çiftleri üretiliyor...');
   const members: CommitteeMember[] = MEMBER_IDS.map((memberId) => {
