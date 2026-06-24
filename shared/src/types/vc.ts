@@ -1,0 +1,142 @@
+/**
+ * W3C Verifiable Credentials / Verifiable Presentation tipleri
+ * Standart: https://www.w3.org/TR/vc-data-model/
+ *
+ * MVP notları:
+ *   - JSON-LD context çözümleme yok; @context sadece identifier olarak taşınır
+ *   - DID document registry yok; `ministryPublicKey` PEM proof içinde taşınır
+ *   - `did:ublp:ministry` → L2'nin authorizedPublicKeys set'iyle whitelist kontrolü yapılır
+ */
+
+// ─── Committee Threshold ECDSA ────────────────────────────────────────────────
+
+export interface CommitteeMemberSig {
+  /** Üye kimliği — örn: did:ublp:committee:customs-authority */
+  memberId: string;
+  /** PEM SPKI — L2 bunu groupKeyHash ile bağlar */
+  publicKey: string;
+  /** base64 IEEE P1363 — SHA256(documentHash_bytes || documentIdHash_bytes) üzerinde */
+  signature: string;
+}
+
+export interface CommitteeAttestation {
+  type: 'ThresholdECDSA';
+  /** Kaç üye imzası gerekli (t-of-n) */
+  threshold: number;
+  totalMembers: number;
+  /**
+   * SHA256(sorted üye public key'leri birleştirilmiş) — L2 bu değeri startup'ta
+   * committee servisinden alır; attestation içindeki değerle karşılaştırır.
+   * Böylece sahte üye enjeksiyonu engellenir.
+   */
+  groupKeyHash: string;
+  signatures: CommitteeMemberSig[];
+  attestedAt: string;
+}
+
+// ─── Verifiable Credential (Bakanlık üretir) ─────────────────────────────────
+
+export interface VCCredentialSubject {
+  /** Holder DID — tır/agent kimliği: did:ublp:agent:{id} */
+  id: string;
+  documentId: string;
+  /** SHA256(canonicalJson(rawDocument)) — ministry'nin imzaladığı değer */
+  documentHash: string;
+  /** SHA256(documentId) — replay dedup anahtarı */
+  documentIdHash: string;
+  /**
+   * Gümrük verisi — ZK proof içinde gizli kalır.
+   * VP içine KONULMAZ; sadece Agent'ın yerel deposunda saklanır.
+   * AÇIK-2: rawDocument VP'ye dahil edilirse ZK'nın tüm amacı ortadan kalkar.
+   */
+  rawDocument?: Record<string, unknown>;
+}
+
+export interface VCProof {
+  type: 'EcdsaSecp256r1Signature2019';
+  created: string;
+  /** did:ublp:ministry#key-1 */
+  verificationMethod: string;
+  proofPurpose: 'assertionMethod';
+  /**
+   * base64 IEEE P1363 ECDSA imzası.
+   * AÇIK-1 fix: SHA256(documentHash_bytes || documentIdHash_bytes) üzerinde imzalanır.
+   * document_hash ve document_id_hash kriptografik olarak birbirine bağlıdır.
+   */
+  proofValue: string;
+  /** PEM SPKI — MVP: DID resolution olmadan key erişimi için */
+  ministryPublicKey: string;
+}
+
+export interface UBLPVerifiableCredential {
+  '@context': string[];
+  /** urn:ublp:vc:{documentId} */
+  id: string;
+  type: ['VerifiableCredential', 'UBLPCustomsCredential'];
+  /** did:ublp:ministry */
+  issuer: string;
+  issuanceDate: string;
+  credentialSubject: VCCredentialSubject;
+  proof: VCProof;
+  /** Kurul (committee) eşik imzası — bakanlık imzasını bağımsız olarak doğrular */
+  committeeAttestation: CommitteeAttestation;
+}
+
+// ─── Verifiable Presentation (Agent üretir, L2'ye gönderir) ──────────────────
+
+export interface VPProofPublicValues {
+  /** SHA256(canonicalJson) — SP1 modunda circuit tarafından hesaplanır */
+  documentHash: string;
+  /** SHA256(ministryPubKeyRaw) — SP1 circuit output */
+  pubKeyHash: string;
+  /** SHA256(documentId) — proof'a bağlı; sonradan değiştirilemez */
+  documentIdHash: string;
+}
+
+export interface VPProof {
+  type: 'SP1ZKProof' | 'MockECDSAProof';
+  created: string;
+  proofPurpose: 'authentication';
+  /** 'sp1-groth16' | 'sp1-plonk' | 'mock-ecdsa-p256' */
+  proofSystem: string;
+  publicValues: VPProofPublicValues;
+  /**
+   * SP1 modunda: base64 Groth16/PLONK proof bytes
+   * Mock modunda: base64 IEEE P1363 ECDSA imzası (bakanlığın imzası)
+   */
+  proofBytes: string;
+  /** PEM SPKI — mock modunda ECDSA verify için; SP1 modunda SP1 verify yeterli */
+  ministryPublicKey: string;
+}
+
+export interface UBLPVerifiablePresentation {
+  '@context': string[];
+  type: ['VerifiablePresentation', 'UBLPZKPresentation'];
+  /** did:ublp:agent:{id} */
+  holder: string;
+  /**
+   * AÇIK-2 fix: rawDocument dahil VC KONULMAZ.
+   * VP içindeki VC yalnızca kamuya açık alanları taşır (documentHash, documentIdHash).
+   * rawDocument Agent'ın yerel deposunda kalır.
+   */
+  verifiableCredential: [UBLPVerifiableCredential];
+  proof: VPProof;
+}
+
+// ─── L2 Settle Response ───────────────────────────────────────────────────────
+
+export interface L2SettleRecord {
+  documentHash: string;
+  documentIdHash: string;
+  ministryPublicKeyHash: string;
+  holderDid: string;
+  /** SUSPICIOUS: anahtar iptalinden sonra geriye dönük forensic işaretlemesi */
+  status: 'ONAYLANDI' | 'REDDEDILDI' | 'SUSPICIOUS';
+  settledAt: string;
+  proofSystem: string;
+}
+
+export interface L2SettleResponse {
+  status: 'ONAYLANDI' | 'REDDEDILDI';
+  record: L2SettleRecord;
+}

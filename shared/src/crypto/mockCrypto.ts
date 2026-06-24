@@ -2,20 +2,37 @@
  * UBLP Kriptografi Modülü
  *
  * Swap noktaları:
- *   poseidon2Hash   → Poseidon2 (ZK uyumlu hash)
- *   generateMockZKProof → snarkjs.groth16.prove(circuit, inputs)
+ *   poseidon2Hash       → Poseidon2 (ZK field-friendly hash)
+ *                         DİKKAT: sp1-circuit/src/main.rs da SHA-256 kullanır.
+ *                         İkisi birlikte değişmeli — sadece biri değişirse bakanlık
+ *                         imzası ZK devre içinde doğrulanamaz hale gelir.
+ *   generateZKProof     → SP1 prover network (SP1_PROVER_NETWORK_KEY + ELF gerekli)
  *   generateKeyPair / signDocument / verifySignature → EdDSA/BabyJubJub
- *
- * Arayüzler değişmez — yalnızca implementasyon değişir.
+ *   verifySignatureOverHash → SP1 proof'ta devre içi constraint olur
  */
 
 import crypto from 'crypto';
+import { generateSP1Proof, sp1Available, sp1VerifyProof } from './sp1Client';
+
+export { sp1VerifyProof } from './sp1Client';
+export type {
+  UBLPVerifiableCredential,
+  UBLPVerifiablePresentation,
+  VCCredentialSubject,
+  VCProof,
+  VPProof,
+  VPProofPublicValues,
+  CommitteeAttestation,
+  CommitteeMemberSig,
+  L2SettleRecord,
+  L2SettleResponse,
+} from '../types/vc';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface KeyPair {
-  privateKey: string; // PEM (PKCS8)
-  publicKey: string;  // PEM (SPKI)
+  privateKey: string;
+  publicKey: string;
 }
 
 export interface PrivateInputs {
@@ -25,8 +42,11 @@ export interface PrivateInputs {
 }
 
 export interface PublicInputs {
+  /** SHA256(canonicalJson(document)) — ministry'nin imzaladığı değer */
   documentHash: string;
   ministryPublicKey: string;
+  /** SHA256(documentId) — replay dedup anahtarı; SP1 proof'a bağlı */
+  documentIdHash: string;
 }
 
 export interface ZKProof {
@@ -34,16 +54,59 @@ export interface ZKProof {
   constraints_passed: boolean;
   signature_valid: boolean;
   timestamp: number;
-  proof_system: string; // 'mock-sha256' | 'groth16' | 'plonk' …
+  proof_system: string;
   public_inputs_hash: string;
+  /**
+   * Mock modunda: bakanlık ECDSA imzası (base64 IEEE P1363)
+   * SP1 modunda: Groth16/PLONK proof bytes (base64)
+   */
+  ministrySignature: string;
+}
+
+// ─── Canonical Serialization ──────────────────────────────────────────────────
+
+export function canonicalJson(data: unknown): string {
+  return JSON.stringify(data, (_key, value: unknown) => {
+    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      return Object.fromEntries(
+        Object.keys(value as Record<string, unknown>)
+          .sort()
+          .map((k) => [k, (value as Record<string, unknown>)[k]])
+      );
+    }
+    return value;
+  });
+}
+
+// ─── Hash ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Swap hedef: Poseidon2 (ZK devreleriyle uyumlu, field-friendly).
+ * UYARI: sp1-circuit/src/main.rs'deki Sha256::digest ile EŞ ZAMANLI değişmeli.
+ * Şimdilik SHA-256 stub. Arayüz değişmez.
+ */
+export function poseidon2Hash(data: string | Record<string, unknown>): string {
+  const input = typeof data === 'string' ? data : canonicalJson(data);
+  return crypto.createHash('sha256').update(input).digest('hex');
+}
+
+/**
+ * AÇIK-1 fix: documentHash ve documentIdHash'i birbirine kriptografik olarak bağlar.
+ * SHA256(documentHash_bytes || documentIdHash_bytes) — 32+32=64 byte input.
+ *
+ * Bakanlık bu birleşik hash'i imzalar; circuit aynı hesaplamayı devre içinde yapar.
+ * Saldırgan documentIdHash'i proof'tan bağımsız olarak değiştiremez.
+ */
+export function combinedSignatureHash(documentHash: string, documentIdHash: string): string {
+  const combined = Buffer.concat([
+    Buffer.from(documentHash, 'hex'),
+    Buffer.from(documentIdHash, 'hex'),
+  ]);
+  return crypto.createHash('sha256').update(combined).digest('hex');
 }
 
 // ─── Key Generation ───────────────────────────────────────────────────────────
 
-/**
- * EC P-256 anahtar çifti üretir.
- * Swap: EdDSA / BabyJubJub için namedCurve'ü değiştir.
- */
 export function generateKeyPair(): KeyPair {
   const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', {
     namedCurve: 'P-256',
@@ -56,59 +119,72 @@ export function generateKeyPair(): KeyPair {
 // ─── Signature ────────────────────────────────────────────────────────────────
 
 /**
- * Belgeyi ECDSA/SHA-256 ile imzalar.
- * Swap: EdDSA için crypto.createSign('ed25519') kullan.
+ * Belgeyi imzalar.
+ * AÇIK-1 fix: SHA256(documentHash || documentIdHash) birleşik hash'i imzalanır.
+ * documentIdHash zorunlu — ikisi birbirine bağlanmadan imza güvenli değil.
  */
 export function signDocument(
   doc: Record<string, unknown>,
-  privateKey: string
+  privateKey: string,
+  documentIdHash: string
 ): string {
-  const sign = crypto.createSign('SHA256');
-  sign.update(JSON.stringify(doc));
-  sign.end();
-  return sign.sign(privateKey, 'base64');
+  const docHash = Buffer.from(poseidon2Hash(canonicalJson(doc)), 'hex');
+  const idHash = Buffer.from(documentIdHash, 'hex');
+  const combined = Buffer.concat([docHash, idHash]);
+  const combinedHash = crypto.createHash('sha256').update(combined).digest();
+  return crypto
+    .sign(null, combinedHash, { key: privateKey, dsaEncoding: 'ieee-p1363' })
+    .toString('base64');
 }
 
 /**
- * ECDSA imzasını doğrular.
+ * Belge imzasını doğrular.
+ * AÇIK-1 fix: combinedSignatureHash(documentHash, documentIdHash) üzerinde verify.
  */
 export function verifySignature(
   doc: Record<string, unknown>,
   signature: string,
-  publicKey: string
+  publicKey: string,
+  documentIdHash: string
 ): boolean {
   try {
-    const verify = crypto.createVerify('SHA256');
-    verify.update(JSON.stringify(doc));
-    verify.end();
-    return verify.verify(publicKey, signature, 'base64');
+    const docHash = Buffer.from(poseidon2Hash(canonicalJson(doc)), 'hex');
+    const idHash = Buffer.from(documentIdHash, 'hex');
+    const combined = Buffer.concat([docHash, idHash]);
+    const combinedHash = crypto.createHash('sha256').update(combined).digest();
+    return crypto.verify(
+      null,
+      combinedHash,
+      { key: publicKey, dsaEncoding: 'ieee-p1363' },
+      Buffer.from(signature, 'base64')
+    );
   } catch {
     return false;
   }
 }
 
-// ─── Hash ─────────────────────────────────────────────────────────────────────
-
-/**
- * Swap hedef: Poseidon2 (ZK devreleriyle uyumlu, field-friendly).
- * Şimdilik SHA-256. Arayüz aynı kalır.
- */
-export function poseidon2Hash(data: string | Record<string, unknown>): string {
-  const input = typeof data === 'string' ? data : JSON.stringify(data);
-  return crypto.createHash('sha256').update(input).digest('hex');
+/** L2 trustless doğrulama — belge içeriği bilinmeden önceden hesaplanmış hash üzerinde verify. */
+export function verifySignatureOverHash(
+  hashHex: string,
+  signature: string,
+  publicKey: string
+): boolean {
+  try {
+    const hashBytes = Buffer.from(hashHex, 'hex');
+    return crypto.verify(
+      null,
+      hashBytes,
+      { key: publicKey, dsaEncoding: 'ieee-p1363' },
+      Buffer.from(signature, 'base64')
+    );
+  } catch {
+    return false;
+  }
 }
 
 // ─── ZK Proof ─────────────────────────────────────────────────────────────────
 
-/**
- * Mock ZK Proof üretici.
- *
- * Swap: Bu fonksiyonun gövdesini aşağıdakiyle değiştir:
- *   const { proof, publicSignals } = await snarkjs.groth16.prove(circuit, inputs);
- *   return { status: 'verified', constraints_passed: true, ... proof };
- *
- * Fonksiyon imzası ve dönüş tipi değişmez.
- */
+/** Mock ZK Proof — SP1 yokken kullanılır. */
 export function generateMockZKProof(
   privateInputs: PrivateInputs,
   publicInputs: PublicInputs
@@ -116,7 +192,8 @@ export function generateMockZKProof(
   const signatureValid = verifySignature(
     privateInputs.rawDocument,
     privateInputs.signature,
-    publicInputs.ministryPublicKey
+    publicInputs.ministryPublicKey,
+    publicInputs.documentIdHash
   );
 
   return {
@@ -124,7 +201,62 @@ export function generateMockZKProof(
     constraints_passed: signatureValid,
     signature_valid: signatureValid,
     timestamp: Date.now(),
-    proof_system: 'mock-sha256',
-    public_inputs_hash: poseidon2Hash(JSON.stringify(publicInputs)),
+    proof_system: 'mock-ecdsa-p256',
+    public_inputs_hash: poseidon2Hash(canonicalJson(publicInputs)),
+    ministrySignature: privateInputs.signature,
   };
+}
+
+/**
+ * ZK Proof üretici — ana giriş noktası.
+ *
+ * SP1_PROVER_NETWORK_KEY + ELF → SP1 Groth16 proof
+ * yoksa → mock ECDSA (geliştirme/test)
+ *
+ * proof_system alanı L2'nin doğrulama stratejisini belirler.
+ */
+export async function generateZKProof(
+  privateInputs: PrivateInputs,
+  publicInputs: PublicInputs
+): Promise<ZKProof> {
+  if (sp1Available()) {
+    console.log('[ZK] SP1 prover network kullanılıyor...');
+    const docCanonical = canonicalJson(privateInputs.rawDocument);
+    const result = await generateSP1Proof({
+      documentCanonicalJson: docCanonical,
+      ministrySignature: privateInputs.signature,
+      ministryPublicKey: publicInputs.ministryPublicKey,
+      documentIdHash: publicInputs.documentIdHash,
+    });
+
+    if (result.publicValues.documentHash !== publicInputs.documentHash) {
+      throw new Error(
+        `SP1 circuit documentHash uyuşmuyor. ` +
+        `circuit=${result.publicValues.documentHash} agent=${publicInputs.documentHash}`
+      );
+    }
+    if (result.publicValues.documentIdHash !== publicInputs.documentIdHash) {
+      throw new Error(
+        `SP1 circuit documentIdHash uyuşmuyor. ` +
+        `circuit=${result.publicValues.documentIdHash} agent=${publicInputs.documentIdHash}`
+      );
+    }
+
+    return {
+      status: 'verified',
+      constraints_passed: true,
+      signature_valid: true,
+      timestamp: Date.now(),
+      proof_system: result.proofSystem,
+      public_inputs_hash: poseidon2Hash(
+        result.publicValues.documentHash +
+        result.publicValues.pubKeyHash +
+        result.publicValues.documentIdHash
+      ),
+      ministrySignature: result.proofBytes,
+    };
+  }
+
+  console.log('[ZK] SP1 yok — mock proof (geliştirme modu).');
+  return generateMockZKProof(privateInputs, publicInputs);
 }

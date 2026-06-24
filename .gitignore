@@ -3,3 +3,5 @@ dist/
 ministry/keys/
 l2-verifier-mock/data/
 *.js.map
+sp1-circuit/target/
+sp1-circuit/elf/

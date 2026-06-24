@@ -1,5 +1,5 @@
 {
-  "name": "@ublp/ublp-agent",
+  "name": "@ublp/committee",
   "version": "1.0.0",
   "scripts": {
     "build": "tsc",

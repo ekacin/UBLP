@@ -1,81 +1,182 @@
 import Fastify from 'fastify';
-import crypto from 'crypto';
 import {
   verifySignature,
-  poseidon2Hash,
-  generateMockZKProof,
+  generateZKProof,
   PrivateInputs,
   PublicInputs,
+  UBLPVerifiableCredential,
+  UBLPVerifiablePresentation,
+  L2SettleResponse,
 } from '@ublp/shared';
 
 const app = Fastify({ logger: false });
 const L2_VERIFIER_URL = process.env.L2_VERIFIER_URL ?? 'http://localhost:3003';
+const AGENT_DID = process.env.AGENT_DID ?? 'did:ublp:agent:default';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface MinistryApprovedPayload {
-  document: Record<string, unknown>;
-  signature: string;
-  ministryPublicKey: string;
-  approvedAt: string;
+interface ProcessVCRequest {
+  verifiableCredential: UBLPVerifiableCredential;
 }
 
 interface ProcessResult {
-  proof: ReturnType<typeof generateMockZKProof>;
-  publicInputs: PublicInputs;
-  l2Result: unknown;
+  presentation: UBLPVerifiablePresentation;
+  l2Result: L2SettleResponse;
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
-app.post<{ Body: MinistryApprovedPayload }>(
+app.post<{ Body: ProcessVCRequest }>(
   '/api/process',
-  { schema: { body: { type: 'object' } } },
+  {
+    schema: {
+      body: {
+        type: 'object',
+        required: ['verifiableCredential'],
+        properties: {
+          verifiableCredential: {
+            type: 'object',
+            required: ['id', 'type', 'issuer', 'credentialSubject', 'proof', 'committeeAttestation'],
+            properties: {
+              id: { type: 'string' },
+              type: { type: 'array' },
+              issuer: { type: 'string' },
+              issuanceDate: { type: 'string' },
+              credentialSubject: {
+                type: 'object',
+                required: ['documentId', 'documentHash', 'documentIdHash', 'rawDocument'],
+                properties: {
+                  id: { type: 'string' },
+                  documentId: { type: 'string', minLength: 1 },
+                  documentHash: { type: 'string', minLength: 1 },
+                  documentIdHash: { type: 'string', minLength: 1 },
+                  rawDocument: { type: 'object' },
+                },
+              },
+              proof: {
+                type: 'object',
+                required: ['proofValue', 'ministryPublicKey'],
+                properties: {
+                  proofValue: { type: 'string', minLength: 1 },
+                  ministryPublicKey: { type: 'string', minLength: 1 },
+                },
+              },
+              committeeAttestation: {
+                type: 'object',
+                required: ['type', 'threshold', 'groupKeyHash', 'signatures'],
+              },
+            },
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
   async (request, reply): Promise<ProcessResult> => {
-    const { document, signature, ministryPublicKey } = request.body;
+    const { verifiableCredential: vc } = request.body;
+    const { credentialSubject: cs, proof: vcProof } = vc;
 
-    console.log('[UBLP Agent] İmzalı belge alındı. ID:', document['documentId'] ?? 'N/A');
-    console.log('[UBLP Agent] Bakanlık imzası doğrulanıyor...');
+    console.log('[UBLP Agent] VC alındı. ID:', vc.id);
+    console.log('[UBLP Agent] Issuer:', vc.issuer, '| Holder:', cs.id ?? AGENT_DID);
 
-    const isValid = verifySignature(document, signature, ministryPublicKey);
+    // ── 1. VC proof doğrulama (Bakanlık birleşik hash imzası) ────────────────
+    // AÇIK-1 fix: verifySignature artık documentIdHash'i de parametre olarak alır.
+    // Kombinasyon: SHA256(documentHash || documentIdHash)
+    console.log('[UBLP Agent] Bakanlık VC imzası doğrulanıyor (combined hash)...');
+    const rawDocument = cs.rawDocument as Record<string, unknown>;
+    const isValid = verifySignature(
+      rawDocument,
+      vcProof.proofValue,
+      vcProof.ministryPublicKey,
+      cs.documentIdHash
+    );
 
     if (!isValid) {
-      console.error('[UBLP Agent] ✗ Bakanlık imzası GEÇERSİZ. İşlem reddedildi.');
-      return reply.status(400).send({ error: 'Bakanlık imzası doğrulanamadı.' }) as never;
+      console.error('[UBLP Agent] ✗ VC imzası GEÇERSİZ.');
+      return reply.status(400).send({ error: 'Bakanlık VC imzası doğrulanamadı.' }) as never;
     }
+    console.log('[UBLP Agent] ✓ VC imzası geçerli.');
 
-    console.log('[UBLP Agent] ✓ Bakanlık imzası doğrulandı. Poseidon2 hash üretiliyor...');
+    // ── 2. ZK Proof üret (SP1 veya mock) ────────────────────────────────────
+    const privateInputs: PrivateInputs = {
+      rawDocument,
+      salt: '',
+      signature: vcProof.proofValue,
+    };
+    const publicInputs: PublicInputs = {
+      documentHash: cs.documentHash,
+      ministryPublicKey: vcProof.ministryPublicKey,
+      documentIdHash: cs.documentIdHash,
+    };
 
-    // Salt → gizlilik katmanı; ileride ZK devresine private input olarak girer
-    const salt = crypto.randomBytes(32).toString('hex');
-    const documentHash = poseidon2Hash(JSON.stringify({ ...document, salt }));
+    console.log('[UBLP Agent] ZK Proof üretiliyor...');
+    const zkProof = await generateZKProof(privateInputs, publicInputs);
+    console.log('[UBLP Agent] ZK Proof üretildi. system:', zkProof.proof_system);
 
-    console.log('[UBLP Agent] Hash üretildi (SHA-256/mock):', documentHash);
-    console.log('[UBLP Agent] Mock ZK Proof üretiliyor...');
+    // ── 3. AÇIK-2 fix: VP için rawDocument'siz VC kopyası ───────────────────
+    // rawDocument gizli ticari veri — L2'ye asla gönderilmez.
+    // Agent kendi yerel deposunda VC'nin tam halini saklar (burada sadece loglanıyor).
+    const vcForVP: UBLPVerifiableCredential = {
+      ...vc,
+      credentialSubject: {
+        id: cs.id,
+        documentId: cs.documentId,
+        documentHash: cs.documentHash,
+        documentIdHash: cs.documentIdHash,
+        // rawDocument intentionally excluded — ZK proof gizliliği korur
+      },
+    };
 
-    const privateInputs: PrivateInputs = { rawDocument: document, salt, signature };
-    const publicInputs: PublicInputs = { documentHash, ministryPublicKey };
+    // ── 4. Verifiable Presentation oluştur ───────────────────────────────────
+    const presentation: UBLPVerifiablePresentation = {
+      '@context': [
+        'https://www.w3.org/2018/credentials/v1',
+        'https://ublp.io/vc/v1',
+      ],
+      type: ['VerifiablePresentation', 'UBLPZKPresentation'],
+      holder: cs.id ?? AGENT_DID,
+      verifiableCredential: [vcForVP],
+      proof: {
+        type: zkProof.proof_system.startsWith('sp1') ? 'SP1ZKProof' : 'MockECDSAProof',
+        created: new Date().toISOString(),
+        proofPurpose: 'authentication',
+        proofSystem: zkProof.proof_system,
+        publicValues: {
+          documentHash: cs.documentHash,
+          pubKeyHash: '',
+          documentIdHash: cs.documentIdHash,
+        },
+        proofBytes: zkProof.ministrySignature,
+        ministryPublicKey: vcProof.ministryPublicKey,
+      },
+    };
 
-    const proof = generateMockZKProof(privateInputs, publicInputs);
+    // ── 5. L2'ye gönder ──────────────────────────────────────────────────────
+    console.log('[UBLP Agent] Verifiable Presentation L2\'ye gönderiliyor →', L2_VERIFIER_URL);
 
-    console.log('[UBLP Agent] ZK Proof üretildi:', JSON.stringify(proof, null, 2));
-    console.log('[UBLP Agent] L2 Verifier\'a gönderiliyor →', L2_VERIFIER_URL);
+    let l2Response: Response;
+    let l2Result: L2SettleResponse;
 
-    const l2Response = await fetch(`${L2_VERIFIER_URL}/api/verify-and-settle`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ proof, publicInputs }),
-    });
-
-    const l2Result = await l2Response.json();
+    try {
+      l2Response = await fetch(`${L2_VERIFIER_URL}/api/verify-and-settle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ presentation }),
+      });
+      l2Result = await l2Response.json() as L2SettleResponse;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[UBLP Agent] ✗ L2 Verifier\'a ulaşılamadı:', msg);
+      return reply.status(503).send({ error: 'L2 Verifier servisine ulaşılamadı.', detail: msg }) as never;
+    }
 
     if (!l2Response.ok) {
       console.error('[UBLP Agent] ✗ L2 Verifier reddetti:', l2Result);
       return reply.status(502).send({ error: 'L2 Verifier onaylamadı.', detail: l2Result }) as never;
     }
 
-    console.log('[UBLP Agent] ✓ L2 Verifier onayladı:', l2Result);
-    return { proof, publicInputs, l2Result };
+    console.log('[UBLP Agent] ✓ L2 onayladı. Durum:', l2Result.status);
+    return { presentation, l2Result };
   }
 );
 
@@ -84,6 +185,7 @@ app.post<{ Body: MinistryApprovedPayload }>(
 const start = async (): Promise<void> => {
   await app.listen({ port: 3002, host: '0.0.0.0' });
   console.log('[UBLP Agent] ✓ UBLP Agent — http://localhost:3002');
+  console.log('[UBLP Agent] DID:', AGENT_DID);
 };
 
 start().catch((err) => {
