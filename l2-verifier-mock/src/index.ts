@@ -1,12 +1,10 @@
 import Fastify from 'fastify';
-import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { Mutex } from 'async-mutex';
 import {
   verifySignatureOverHash,
   combinedSignatureHash,
-  holderProofHash,
   poseidon2Hash,
   sp1VerifyProof,
   blsVerifyThreshold,
@@ -157,29 +155,6 @@ async function verifyCommitteeAttestation(
   return result;
 }
 
-// ─── Holder Proof Doğrulama (K-3 fix) ────────────────────────────────────────
-
-function verifyHolderProof(
-  holderSignature: string,
-  holderPublicKey: string,
-  documentHash: string,
-  documentIdHash: string,
-  holderDid: string
-): boolean {
-  try {
-    const payloadHex = holderProofHash(documentHash, documentIdHash, holderDid);
-    const payload = Buffer.from(payloadHex, 'hex');
-    return crypto.verify(
-      null,
-      payload,
-      { key: holderPublicKey, dsaEncoding: 'ieee-p1363' },
-      Buffer.from(holderSignature, 'base64')
-    );
-  } catch {
-    return false;
-  }
-}
-
 // ─── DB ───────────────────────────────────────────────────────────────────────
 
 const dbMutex = new Mutex();
@@ -225,21 +200,22 @@ app.post<{ Body: VerifyRequest }>(
               },
               proof: {
                 type: 'object',
-                required: ['proofSystem', 'publicValues', 'proofBytes', 'ministryPublicKey', 'holderSignature', 'holderPublicKey'],
+                // K-3 fix: holderSignature ve holderPublicKey SCHEMA'DAN KALDIRILDI
+                // L2 ham holder key/sig almaz — yalnızca circuit'in commit ettiği holderPubKeyHash
+                required: ['proofSystem', 'publicValues', 'proofBytes', 'ministryPublicKey'],
                 properties: {
                   proofSystem: { type: 'string', minLength: 1 },
                   publicValues: {
                     type: 'object',
-                    required: ['documentHash', 'documentIdHash'],
+                    required: ['documentHash', 'documentIdHash', 'holderPubKeyHash'],
                     properties: {
                       documentHash: { type: 'string', minLength: 1 },
                       documentIdHash: { type: 'string', minLength: 1 },
+                      holderPubKeyHash: { type: 'string', minLength: 64, maxLength: 64 },
                     },
                   },
                   proofBytes: { type: 'string', minLength: 1 },
                   ministryPublicKey: { type: 'string', minLength: 1 },
-                  holderSignature: { type: 'string', minLength: 1 },
-                  holderPublicKey: { type: 'string', minLength: 1 },
                 },
               },
             },
@@ -258,10 +234,12 @@ app.post<{ Body: VerifyRequest }>(
     const ministryPublicKey = vpProof.ministryPublicKey;
     const documentHash = vpProof.publicValues.documentHash;
     const documentIdHash = vpProof.publicValues.documentIdHash;
+    const holderPubKeyHash = vpProof.publicValues.holderPubKeyHash;
     const holderDid = presentation.holder;
 
     console.log('[L2 Verifier] VP alındı. Holder:', holderDid);
     console.log('[L2 Verifier] documentIdHash:', documentIdHash);
+    console.log('[L2 Verifier] holderPubKeyHash:', holderPubKeyHash.slice(0, 16) + '…');
 
     // ── 0. Whitelist + revocation ──────────────────────────────────────────────
     if (!authorizedPublicKeys.has(ministryPublicKey)) {
@@ -285,19 +263,17 @@ app.post<{ Body: VerifyRequest }>(
       return reply.status(400).send({ error: 'VP rawDocument içeremez.' });
     }
 
-    // ── 2. K-3 fix: Holder VP imzası ─────────────────────────────────────────
-    const holderOk = verifyHolderProof(
-      vpProof.holderSignature,
-      vpProof.holderPublicKey,
-      documentHash,
-      documentIdHash,
-      holderDid
-    );
-    if (!holderOk) {
-      console.error('[L2 Verifier] ✗ Holder VP imzası GEÇERSİZ — MitM veya holder değiştirilmiş.');
-      return reply.status(400).send({ error: 'Holder VP imzası doğrulanamadı.' });
+    // ── 2. K-3 fix: holderPubKeyHash varlık kontrolü ──────────────────────────
+    // SP1 modunda: circuit içinde holder ECDSA imzası doğrulandı, hash commit edildi.
+    //   sp1VerifyProof çağrısı holderPubKeyHash'i expectedPublicValues'a ekler →
+    //   eğer biri holderPubKeyHash'i tahrif etmeye çalışırsa SP1 doğrulama başarısız olur.
+    // Mock modunda: agent lokal doğruladı, sadece hash VP'ye girdi.
+    //   L2 ham imza/key almaz; yalnızca hash non-empty check yapılır (dev limitation).
+    if (!holderPubKeyHash || holderPubKeyHash.length !== 64) {
+      console.error('[L2 Verifier] ✗ holderPubKeyHash eksik veya geçersiz.');
+      return reply.status(400).send({ error: 'holderPubKeyHash eksik veya geçersiz (K-3).' });
     }
-    console.log('[L2 Verifier] ✓ Holder imzası doğrulandı. DID:', holderDid);
+    console.log('[L2 Verifier] ✓ holderPubKeyHash alındı (ZK circuit commit).');
 
     // ── 3. Kurul BLS attestation (K-2 fix) ───────────────────────────────────
     const committeeResult = await verifyCommitteeAttestation(
@@ -314,8 +290,6 @@ app.post<{ Body: VerifyRequest }>(
     // ── 4. K-1 fix: ZK Proof / ECDSA doğrulama — policy L2 env'inden ─────────
     const proofSystem = vpProof.proofSystem;
 
-    // K-1: İstemcinin proofSystem alanına doğrulama stratejisini bırakmıyoruz.
-    // PROOF_MODE=sp1 → mock proofSystem ile gelen VP reddedilir.
     if (PROOF_MODE === 'sp1') {
       if (proofSystem !== 'sp1-groth16' && proofSystem !== 'sp1-plonk') {
         console.error('[L2 Verifier] ✗ PROOF_MODE=sp1: ZK proof zorunlu, mock reddedildi.');
@@ -326,15 +300,18 @@ app.post<{ Body: VerifyRequest }>(
     let proofValid: boolean;
 
     if (proofSystem === 'sp1-groth16' || proofSystem === 'sp1-plonk') {
-      console.log('[L2 Verifier] SP1 proof doğrulanıyor...');
+      console.log('[L2 Verifier] SP1 proof doğrulanıyor (holderPubKeyHash 4. output dahil)...');
       proofValid = await sp1VerifyProof({
         proofBytes: vpProof.proofBytes,
         documentHash,
         documentIdHash,
         ministryPublicKey,
+        // K-3: SP1 verify holderPubKeyHash'i expectedPublicValues[3] olarak bağlar.
+        // Eğer circuit holder imzasını reddettiyse proof bytes zaten geçersiz.
+        holderPubKeyHash,
       });
     } else if (PROOF_MODE === 'dev') {
-      // Dev modunda mock ECDSA — PROOF_MODE=sp1'de bu branch'e asla girilmez (yukarıda reddedilir)
+      // Dev modunda mock ECDSA — PROOF_MODE=sp1'de bu branch'e asla girilmez
       const combined = combinedSignatureHash(documentHash, documentIdHash);
       proofValid = verifySignatureOverHash(combined, vpProof.proofBytes, ministryPublicKey);
     } else {
