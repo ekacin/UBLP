@@ -15,6 +15,16 @@ import crypto from 'crypto';
 import { generateSP1Proof, sp1Available, sp1VerifyProof } from './sp1Client';
 
 export { sp1VerifyProof } from './sp1Client';
+export {
+  blsGenerateKeyPair,
+  blsSign,
+  blsVerify,
+  blsAggregateSignatures,
+  blsAggregatePublicKeys,
+  blsGroupKeyHash,
+  blsVerifyThreshold,
+} from './blsCrypto';
+export type { BLSKeyPair } from './blsCrypto';
 export type {
   UBLPVerifiableCredential,
   UBLPVerifiablePresentation,
@@ -23,7 +33,6 @@ export type {
   VPProof,
   VPProofPublicValues,
   CommitteeAttestation,
-  CommitteeMemberSig,
   L2SettleRecord,
   L2SettleResponse,
 } from '../types/vc';
@@ -103,6 +112,24 @@ export function combinedSignatureHash(documentHash: string, documentIdHash: stri
     Buffer.from(documentIdHash, 'hex'),
   ]);
   return crypto.createHash('sha256').update(combined).digest('hex');
+}
+
+/**
+ * K-3 fix: Holder (Agent) VP imzası için payload hash.
+ * SHA256(documentHash_bytes || documentIdHash_bytes || holderDid_utf8)
+ * Holder DID değiştirilirse imza kırılır → MitM koruması.
+ */
+export function holderProofHash(
+  documentHash: string,
+  documentIdHash: string,
+  holderDid: string
+): string {
+  return crypto
+    .createHash('sha256')
+    .update(Buffer.from(documentHash, 'hex'))
+    .update(Buffer.from(documentIdHash, 'hex'))
+    .update(holderDid, 'utf8')
+    .digest('hex');
 }
 
 // ─── Key Generation ───────────────────────────────────────────────────────────

@@ -8,29 +8,26 @@
  *   - `did:ublp:ministry` → L2'nin authorizedPublicKeys set'iyle whitelist kontrolü yapılır
  */
 
-// ─── Committee Threshold ECDSA ────────────────────────────────────────────────
-
-export interface CommitteeMemberSig {
-  /** Üye kimliği — örn: did:ublp:committee:customs-authority */
-  memberId: string;
-  /** PEM SPKI — L2 bunu groupKeyHash ile bağlar */
-  publicKey: string;
-  /** base64 IEEE P1363 — SHA256(documentHash_bytes || documentIdHash_bytes) üzerinde */
-  signature: string;
-}
+// ─── Committee BLS Threshold ──────────────────────────────────────────────────
 
 export interface CommitteeAttestation {
-  type: 'ThresholdECDSA';
+  type: 'BLSThreshold';
   /** Kaç üye imzası gerekli (t-of-n) */
   threshold: number;
   totalMembers: number;
   /**
-   * SHA256(sorted üye public key'leri birleştirilmiş) — L2 bu değeri startup'ta
-   * committee servisinden alır; attestation içindeki değerle karşılaştırır.
-   * Böylece sahte üye enjeksiyonu engellenir.
+   * K-2 fix: SHA256(sorted ALL n member BLS pubkeys concatenated) — statik.
+   * t < n üye imzalasa bile bu hash değişmez.
+   * L2 bunu startup'ta committee'den alır; yalnızca bu hash attestation'dan kontrol edilir.
    */
   groupKeyHash: string;
-  signatures: CommitteeMemberSig[];
+  /**
+   * K-2 fix: hangi üyelerin imzaladığı (memberId'ler).
+   * L2 kendi deposundaki BLS pubkeys'den lookup yapar — attestation pubkey'lerine GÜVENMEZ.
+   */
+  signerIds: string[];
+  /** BLS12-381 aggregate imza (hex G2 compressed, 96 byte) — agg(sig_i...) */
+  aggregatedSignature: string;
   attestedAt: string;
 }
 
@@ -61,7 +58,6 @@ export interface VCProof {
   /**
    * base64 IEEE P1363 ECDSA imzası.
    * AÇIK-1 fix: SHA256(documentHash_bytes || documentIdHash_bytes) üzerinde imzalanır.
-   * document_hash ve document_id_hash kriptografik olarak birbirine bağlıdır.
    */
   proofValue: string;
   /** PEM SPKI — MVP: DID resolution olmadan key erişimi için */
@@ -78,7 +74,7 @@ export interface UBLPVerifiableCredential {
   issuanceDate: string;
   credentialSubject: VCCredentialSubject;
   proof: VCProof;
-  /** Kurul (committee) eşik imzası — bakanlık imzasını bağımsız olarak doğrular */
+  /** Kurul BLS eşik imzası — bakanlık imzasını bağımsız olarak doğrular */
   committeeAttestation: CommitteeAttestation;
 }
 
@@ -105,8 +101,16 @@ export interface VPProof {
    * Mock modunda: base64 IEEE P1363 ECDSA imzası (bakanlığın imzası)
    */
   proofBytes: string;
-  /** PEM SPKI — mock modunda ECDSA verify için; SP1 modunda SP1 verify yeterli */
+  /** PEM SPKI bakanlık anahtarı */
   ministryPublicKey: string;
+  /**
+   * K-3 fix: Holder (Agent) kendi P-256 anahtarıyla VP'yi imzalar.
+   * Payload: SHA256(documentHash_bytes || documentIdHash_bytes || holderDid_utf8)
+   * MitM saldırısında holder'ı değiştirmek imzayı kırar.
+   */
+  holderSignature: string;
+  /** PEM SPKI Agent anahtarı — L2 holder DID'ini buna bağlar */
+  holderPublicKey: string;
 }
 
 export interface UBLPVerifiablePresentation {
@@ -117,7 +121,6 @@ export interface UBLPVerifiablePresentation {
   /**
    * AÇIK-2 fix: rawDocument dahil VC KONULMAZ.
    * VP içindeki VC yalnızca kamuya açık alanları taşır (documentHash, documentIdHash).
-   * rawDocument Agent'ın yerel deposunda kalır.
    */
   verifiableCredential: [UBLPVerifiableCredential];
   proof: VPProof;

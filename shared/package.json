@@ -7,6 +7,9 @@
     "build": "tsc",
     "dev": "tsc --watch"
   },
+  "dependencies": {
+    "@noble/bls12-381": "^1.4.0"
+  },
   "devDependencies": {
     "@types/node": "^20.19.43",
     "typescript": "^5.4.5"
