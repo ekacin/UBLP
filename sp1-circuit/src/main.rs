@@ -3,7 +3,7 @@
 // Private inputs (L2'ye açıklanmaz — circuit içinde tüketilir):
 //   1. ministry_signature:     Vec<u8> — IEEE P1363, 64 byte (r||s)
 //   2. ministry_pub_key_raw:   Vec<u8> — uncompressed P-256 point, 65 byte
-//   3. document_hash:          Vec<u8> — SHA256(canonicalJson), 32 byte (önceden hesaplanmış)
+//   3. document_hash:          Vec<u8> — SHA256("ublp-doc-v1:" + canonicalJson), 32 byte
 //   4. document_id_hash:       Vec<u8> — SHA256(documentId), 32 byte
 //   5. holder_signature:       Vec<u8> — IEEE P1363, 64 byte — K-3 holder auth
 //   6. holder_pub_key_raw:     Vec<u8> — uncompressed P-256 point, 65 byte — K-3
@@ -23,7 +23,7 @@
 //   L2 state'i güncellenir.
 //
 // Public outputs — commit (L2 doğrular, Succinct API bağlar):
-//   [0] document_hash:         [u8; 32] — SHA256(canonicalJson) — trusted issuer
+//   [0] document_hash:         [u8; 32] — SHA256("ublp-doc-v1:" + canonicalJson) — trusted issuer
 //   [1] ministry_pub_key_hash: [u8; 32] — SHA256(ministry_pub_key_raw)
 //   [2] document_id_hash:      [u8; 32] — replay koruması; proof'a bağlı
 //   [3] holder_pub_key_hash:   [u8; 32] — K-3: SHA256(holder_pub_key_raw)
@@ -43,8 +43,8 @@ pub fn main() {
     // ── Private inputs ──────────────────────────────────────────────────────────
     let ministry_signature: Vec<u8> = sp1_zkvm::io::read_vec();
     let ministry_pub_key_raw: Vec<u8> = sp1_zkvm::io::read_vec();
-    // document_hash: önceden hesaplanmış SHA256(canonicalJson) — 32 byte
-    // Trusted issuer model: Bakanlık hash'i dışarıda doğru hesaplar.
+    // document_hash: SHA256("ublp-doc-v1:" + canonicalJson), bakanlık/agent tarafından hesaplanmış.
+    // Domain prefix cross-protocol hash çakışmasını engeller.
     // Ham JSON circuit'e sokulmuyor → masraf yok, güvenlik aynı.
     let document_hash_input: Vec<u8> = sp1_zkvm::io::read_vec();
     let document_id_hash: Vec<u8> = sp1_zkvm::io::read_vec();

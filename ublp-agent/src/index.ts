@@ -7,6 +7,7 @@ import {
   generateZKProof,
   holderProofHash,
   sha256Hash,
+  sha256HashDocument,
   canonicalJson,
   PrivateInputs,
   PublicInputs,
@@ -168,7 +169,7 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
       // credentialSubject artık documentHash / documentIdHash taşımıyor.
       // Agent rawDocument'ten türetir; Bakanlık imzası da aynı değerler üzerinde.
       const rawDocument = cs.rawDocument as Record<string, unknown>;
-      const documentHash = sha256Hash(canonicalJson(rawDocument));
+      const documentHash = sha256HashDocument(rawDocument);  // domain: ublp-doc-v1:
       const documentIdHash = sha256Hash(cs.documentId);
 
       // ── 2. Bakanlık VC imzasını doğrula ──────────────────────────────────────
