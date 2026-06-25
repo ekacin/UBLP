@@ -98,7 +98,7 @@ export interface SP1ProofResult {
 }
 
 export async function generateSP1Proof(params: {
-  documentCanonicalJson: string;  // canonicalJson(document) — private, circuit hash'i hesaplar
+  documentHash: string;           // hex, 32 byte — SHA256(canonicalJson), trusted issuer önceden hesaplar
   ministrySignature: string;      // base64 IEEE P1363, 64 byte
   ministryPublicKey: string;      // PEM SPKI
   documentIdHash: string;         // hex, 32 byte — AÇIK-1: proof'a bağlanır
@@ -112,7 +112,7 @@ export async function generateSP1Proof(params: {
   if (!fs.existsSync(ELF_PATH)) throw new Error(`ELF bulunamadı: ${ELF_PATH}`);
 
   const {
-    documentCanonicalJson, ministrySignature, ministryPublicKey, documentIdHash,
+    documentHash, ministrySignature, ministryPublicKey, documentIdHash,
     holderSignature, holderPublicKey, holderDid,
     mode = 'groth16',
   } = params;
@@ -120,14 +120,14 @@ export async function generateSP1Proof(params: {
   // stdin sırası main.rs'deki read_vec() sırasıyla birebir eşleşmeli:
   //   1. ministry_signature
   //   2. ministry_pub_key_raw
-  //   3. document_canonical_json
+  //   3. document_hash        (32 byte — önceden hesaplanmış, ham JSON gönderilmiyor)
   //   4. document_id_hash
   //   5. holder_signature     (K-3 — private, L2'ye gitmiyor)
   //   6. holder_pub_key_raw   (K-3 — private, yalnızca hash commit edilir)
   //   7. holder_did           (K-3 — private, payload'a gömülür)
   const sigBytes = Buffer.from(ministrySignature, 'base64');
   const pubKeyRaw = pubKeyPemToRaw(ministryPublicKey);
-  const canonicalJsonBytes = Buffer.from(documentCanonicalJson, 'utf8');
+  const docHashBytes = Buffer.from(documentHash, 'hex');
   const idHashBytes = Buffer.from(documentIdHash, 'hex');
   const holderSigBytes = Buffer.from(holderSignature, 'base64');
   const holderPubKeyRaw = pubKeyPemToRaw(holderPublicKey);
@@ -135,6 +135,7 @@ export async function generateSP1Proof(params: {
 
   if (sigBytes.length !== 64) throw new Error('Ministry imzası 64 byte olmalı (IEEE P1363).');
   if (pubKeyRaw.length !== 65) throw new Error('Ministry public key 65 byte olmalı (uncompressed SEC1).');
+  if (docHashBytes.length !== 32) throw new Error('documentHash 32 byte olmalı (hex, 64 char).');
   if (idHashBytes.length !== 32) throw new Error('documentIdHash 32 byte olmalı.');
   if (holderSigBytes.length !== 64) throw new Error('Holder imzası 64 byte olmalı (IEEE P1363).');
   if (holderPubKeyRaw.length !== 65) throw new Error('Holder public key 65 byte olmalı (uncompressed SEC1).');
@@ -142,7 +143,7 @@ export async function generateSP1Proof(params: {
   const stdin: string[] = [
     sigBytes.toString('base64'),
     pubKeyRaw.toString('base64'),
-    canonicalJsonBytes.toString('base64'),
+    docHashBytes.toString('base64'),
     idHashBytes.toString('base64'),
     holderSigBytes.toString('base64'),
     holderPubKeyRaw.toString('base64'),
