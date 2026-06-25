@@ -27,11 +27,11 @@ Gümrük belgelerini ZK kanıtı, BLS eşik imzası ve W3C Verifiable Credential
 | Tek yetkili = tek yozlaşma noktası | BLS t-of-n: 2/3 kurul imzası olmadan onay geçmez |
 | "Belge mi imzalandı?" doğrulanamaz | ZK circuit: SHA256(belge) ↔ ministry sig matematiksel bağ |
 | Sahte belge fark edilmez | `document_hash` L2'de immutable — sonradan değiştirilse ZK doğrulaması başarısız |
-| Holder kimliği cleartext | K-3: holder sig ZK private input, L2 yalnızca `holderPubKeyHash` görür |
+| Holder kimliği cleartext | Holder kimlik gizliliği: holder sig ZK private input, L2 yalnızca `holderPubKeyHash` görür |
 | Anahtar ele geçirilirse geçmiş tehlikede | Timestamped revocation: yalnızca `settledAt >= compromisedAt` SUSPICIOUS |
 | Kimin onayladığı belirsiz | `groupKeyHash` + `signerIds` → hangi kurul üyelerinin imzaladığı kayıt altında |
 
-Sistemin amacı gümrük memurunun yerine geçmek değil — karar alma sürecini matematiğe dayalı hale getirmek ve "rüşvete yer olmayan yapı" oluşturmak. Tek bir kurul üyesi imzalasa onay geçmez; tek bir bakanlık yetkilisi belgede değişiklik yapsa ZK doğrulaması kırılır.
+UBLP, bakanlık onayından sonraki aşamada — nakliye, kurul onayları ve sınır geçişlerinde — verinin manipüle edilmesini ve çoklu aktörler arasındaki yozlaşma zincirini yapısal olarak imkânsız kılar. Bakanlığın ilk onayı hâlâ insan kararına dayanır; UBLP bu aşamayı değil, onayın verilmesinden sonra gerçekleşebilecek her türlü müdahaleyi kriptografik güvence altına alır. Tek bir kurul üyesi imzalasa onay geçmez; bakanlık onayından sonra belgede değişiklik yapılsa ZK doğrulaması kırılır.
 
 ---
 
@@ -66,7 +66,7 @@ Sistemin amacı gümrük memurunun yerine geçmek değil — karar alma sürecin
          ▼
 ┌─────────────────────┐
 │  UBLP Agent :3002   │  1. VC imzasını doğrula
-│  (Nakliyeci)        │  2. Holder ECDSA sig üret (ZK private input — K-3)
+│  (Nakliyeci)        │  2. Holder ECDSA sig üret (ZK private input — holder kimlik gizliliği)
 │                     │  3. ZK Proof üret (mock: ECDSA, prod: SP1 Groth16)
 │                     │  4. ZK kanıtını Kurul'a sun (ham belge gitmez)
 └────────┬────────────┘
@@ -253,17 +253,17 @@ sp1-circuit/src/main.rs
 **Private inputs (L2'ye açıklanmaz):**
 1. `ministry_signature` — P-256 ECDSA, 64 byte IEEE P1363
 2. `ministry_pub_key_raw` — uncompressed SEC1, 65 byte
-3. `document_hash` — SHA256(canonicalJson), 32 byte
+3. `document_hash` — SHA256("ublp-doc-v1:" + canonicalJson), 32 byte
 4. `document_id_hash` — 32 byte
-5. `holder_signature` — P-256 ECDSA, 64 byte (K-3)
-6. `holder_pub_key_raw` — 65 byte (K-3)
-7. `holder_did` — UTF-8 (K-3)
+5. `holder_signature` — P-256 ECDSA, 64 byte — holder kimlik gizliliği
+6. `holder_pub_key_raw` — uncompressed SEC1, 65 byte
+7. `holder_did` — UTF-8 bytes
 
 **Public outputs (L2 doğrular):**
 - `document_hash` — belge parmak izi
 - `ministry_pub_key_hash` — SHA256(ministry raw key)
 - `document_id_hash` — replay koruması
-- `holder_pub_key_hash` — K-3: holder kimlik kanıtı, ham key değil
+- `holder_pub_key_hash` — holder kimlik kanıtı; ham key değil, hash'i
 
 **Circuit derleme (Rust + SP1 toolchain gerekli):**
 ```bash
@@ -278,8 +278,8 @@ cargo prove build
 | Risk | Koruma |
 |------|--------|
 | Bakanlık tekel riski | BLS t-of-n kurul; 2/3 eşik |
-| Holder kimlik sızıntısı | K-3: holder sig ZK private input; L2 yalnızca `holderPubKeyHash` görür |
-| Belge içerik sızıntısı | `rawDocument` VP'den çıkarıldı; `credentialSubject` yalnızca `{ id, documentId }` |
+| Holder kimlik sızıntısı | Holder kimlik gizliliği: holder sig ZK private input; L2 yalnızca `holderPubKeyHash` görür |
+| Belge içerik sızıntısı | `rawDocument` VP'ye dahil edilmez; L2 ZK Proof + BLS imzasını doğrular — belge içeriği circuit içinde tüketilir, VP'yi okuyan taraf içeriğe erişemez |
 | Replay saldırısı | `documentIdHash` L2'de unique constraint |
 | Anahtar sızması | Zaman damgalı revocation; sadece `settledAt >= compromisedAt` SUSPICIOUS |
 | Proof downgrade | `PROOF_MODE` L2 env'den; client'tan değil |
