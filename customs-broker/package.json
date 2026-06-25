@@ -1,6 +1,6 @@
 {
   "name": "@ublp/customs-broker",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",

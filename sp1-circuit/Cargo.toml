@@ -1,0 +1,18 @@
+[package]
+name = "ublp-verifier"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "ublp-verifier"
+path = "src/main.rs"
+
+[dependencies]
+sp1-zkvm = "4"
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8"] }
+sha2 = { version = "0.10", default-features = false }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
