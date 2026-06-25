@@ -37,49 +37,51 @@ UBLP makes data manipulation structurally impossible in the post-approval phase 
 | `committee` | Accredited committee (e.g. exporters' union) | Verifies ZK proof, applies BLS threshold signature |
 | `l2-verifier-mock` | L2 chain | Verifies BLS + ZK, settles document |
 ### Flow
-┌──────────────────────────┐
-│ Customs Broker │ Prepares document. holderDid = carrier DID.
-│ (customs-broker) │
-└────────┬─────────────────┘
-│ 1. POST /api/approve { document + holderDid }
-▼
-┌─────────────────────┐
-│ Ministry :3001 │ Signs with EC P-256 ECDSA. Issues VC.
-│ │ AES-256-GCM key at rest.
-└────────┬────────────┘
-│ Verifiable Credential (signed)
-▼ (broker forwards VC to carrier)
-│ 2. POST /api/process { verifiableCredential }
-▼
-┌─────────────────────┐
-│ UBLP Agent :3002 │ 1. Verify VC signature
-│ (Carrier) │ 2. Generate holder ECDSA sig (ZK private input — holder privacy)
-│ │ 3. Generate ZK Proof (mock: ECDSA, prod: SP1 Groth16)
-│ │ 4. Submit ZK proof to Committee (raw document never sent)
-└────────┬────────────┘
-│ 3. POST /api/attest { proofBytes, publicValues }
-▼
-┌─────────────────────┐
-│ Committee :3004 │ Verifies ZK proof → mathematical conviction.
-│ │ BLS12-381 t-of-n sign (threshold: 2/3).
-│ 3 members, 2/3 │ AES-256-GCM key at rest.
-└────────┬────────────┘
-│ BLS aggregate attestation
-▼
-┌─────────────────────┐
-│ UBLP Agent :3002 │ Builds Verifiable Presentation.
-└────────┬────────────┘
-│ 4. POST /api/verify-and-settle { VP }
-▼
-┌─────────────────────┐
-│ L2 Verifier :3003 │ 1. Whitelist + revocation check
-│ (L2 Layer) │ 2. BLS threshold verify (independent)
-│ │ 3. ZK proof verify (independent)
-│ │ 4. Replay dedup (documentIdHash)
-└─────────────────────┘
-│
-settled.json (APPROVED / SUSPICIOUS)
 
+```
+┌──────────────────────────┐
+│  Customs Broker          │  Prepares document. holderDid = carrier DID.
+│  (customs-broker)        │
+└────────┬─────────────────┘
+         │ 1. POST /api/approve  { document + holderDid }
+         ▼
+┌─────────────────────┐
+│  Ministry  :3001    │  Signs with EC P-256 ECDSA. Issues VC.
+│                     │  AES-256-GCM key at rest.
+└────────┬────────────┘
+         │ Verifiable Credential (signed)
+         ▼ (broker forwards VC to carrier)
+         │ 2. POST /api/process  { verifiableCredential }
+         ▼
+┌─────────────────────┐
+│  UBLP Agent :3002   │  1. Verify VC signature
+│  (Carrier)          │  2. Generate holder ECDSA sig (ZK private input — holder privacy)
+│                     │  3. Generate ZK Proof (mock: ECDSA, prod: SP1 Groth16)
+│                     │  4. Submit ZK proof to Committee (raw document never sent)
+└────────┬────────────┘
+         │ 3. POST /api/attest  { proofBytes, publicValues }
+         ▼
+┌─────────────────────┐
+│  Committee  :3004   │  Verifies ZK proof → mathematical conviction.
+│                     │  BLS12-381 t-of-n sign (threshold: 2/3).
+│  3 members, 2/3     │  AES-256-GCM key at rest.
+└────────┬────────────┘
+         │ BLS aggregate attestation
+         ▼
+┌─────────────────────┐
+│  UBLP Agent :3002   │  Builds Verifiable Presentation.
+└────────┬────────────┘
+         │ 4. POST /api/verify-and-settle  { VP }
+         ▼
+┌─────────────────────┐
+│  L2 Verifier :3003  │  1. Whitelist + revocation check
+│  (L2 Layer)         │  2. BLS threshold verify (independent)
+│                     │  3. ZK proof verify (independent)
+│                     │  4. Replay dedup (documentIdHash)
+└─────────────────────┘
+         │
+    settled.json  (APPROVED / SUSPICIOUS)
+```
 ---
 ## Technology Stack
 | Layer | Technology |
