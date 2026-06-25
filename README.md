@@ -1,4 +1,9 @@
-# UBLP — Unified Blockchain Logistics Protocol
+# UBLP · ZK Gümrük Doğrulama Modülü
+
+> **[UBLP Ekosistemi](https://github.com/ekacin/UBLP) → `modules/zk-customs`**
+>
+> Bu depo UBLP'nin Zero-Knowledge gümrük doğrulama modülünü içerir.
+> UBLP, lojistik süreçlerini uçtan uca kriptografik güvence altına alan çok modüllü bir protokoldür.
 
 **Zero-Knowledge customs clearance over a mock L2 settlement layer.**
 
@@ -6,7 +11,7 @@ Gümrük belgelerini ZK kanıtı, BLS eşik imzası ve W3C Verifiable Credential
 
 ---
 
-## Neden?
+## Neden UBLP?
 
 ### Mevcut Gümrük Sisteminin Sorunları
 
@@ -119,7 +124,7 @@ UBLP, bakanlık onayından sonraki aşamada — nakliye, kurul onayları ve sın
 - npm 10+
 
 ```bash
-git clone https://github.com/<kullanici>/ublp.git
+git clone https://github.com/ekacin/UBLP.git
 cd ublp
 npm install
 npm run dev
@@ -304,5 +309,7 @@ cargo prove build
 MIT
 
 ---
+
+**Ekosistem:** [ekacin/UBLP](https://github.com/ekacin/UBLP)
 
 *Efe Kaan Açın — [acinefekaan@gmail.com](mailto:acinefekaan@gmail.com)*
