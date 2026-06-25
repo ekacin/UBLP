@@ -306,7 +306,7 @@ cargo prove build
 
 ## Lisans
 
-MIT
+Apache 2.0 — Patent güvenceli, enterprise-friendly. Ticari kullanım serbest, modifikasyonlar kaynak açma zorunluluğu yok. Patent troll koruması dahil.
 
 ---
 
