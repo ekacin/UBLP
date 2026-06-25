@@ -1,6 +1,0 @@
-[L2 Verifier] ✓ L2 Verifier Mock — http://localhost:3003
-[L2 Verifier] ✓ Bakanlık public key yetkili listeye eklendi.
-[L2 Verifier] Kanıt alındı. Doğrulama başlıyor...
-[L2 Verifier] Belge hash: dd5af009d90293a7460f8030e5229f7646f702d81ce746fa08e53cc2819a31b4
-[L2 Verifier] ✓ Belge "ONAYLANDI" olarak DB'ye kaydedildi.
-[L2 Verifier] Toplam onaylı belge sayısı: 1

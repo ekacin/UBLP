@@ -6,11 +6,10 @@ import path from 'path';
 import {
   generateKeyPair,
   signDocument,
-  poseidon2Hash,
+  sha256Hash,
   canonicalJson,
   KeyPair,
   UBLPVerifiableCredential,
-  CommitteeAttestation,
 } from '@ublp/shared';
 
 const pbkdf2 = promisify(crypto.pbkdf2);
@@ -18,7 +17,6 @@ const pbkdf2 = promisify(crypto.pbkdf2);
 const app = Fastify({ logger: false });
 const KEYS_PATH = path.join(__dirname, '..', 'keys', 'keypair.json');
 const MINISTRY_DID = process.env.MINISTRY_DID ?? 'did:ublp:ministry';
-const COMMITTEE_URL = process.env.COMMITTEE_URL ?? 'http://localhost:3004';
 
 // ─── Key Encryption ───────────────────────────────────────────────────────────
 
@@ -102,23 +100,6 @@ async function loadOrGenerateKeys(): Promise<KeyPair> {
   return keys;
 }
 
-// ─── Committee ────────────────────────────────────────────────────────────────
-
-async function requestCommitteeAttestation(
-  documentHash: string,
-  documentIdHash: string
-): Promise<CommitteeAttestation> {
-  const res = await fetch(`${COMMITTEE_URL}/api/attest`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ documentHash, documentIdHash }),
-  });
-  if (!res.ok) {
-    throw new Error(`[Committee] HTTP ${res.status}: ${await res.text()}`);
-  }
-  return res.json() as Promise<CommitteeAttestation>;
-}
-
 // ─── Server ───────────────────────────────────────────────────────────────────
 
 async function buildServer(keys: KeyPair): Promise<typeof app> {
@@ -148,20 +129,17 @@ async function buildServer(keys: KeyPair): Promise<typeof app> {
 
       console.log('[Ministry] Gümrük belgesi alındı. ID:', documentId);
 
-      const documentHash = poseidon2Hash(canonicalJson(document));
-      const documentIdHash = poseidon2Hash(documentId);
+      const documentHash = sha256Hash(canonicalJson(document));
+      const documentIdHash = sha256Hash(documentId);
 
       // AÇIK-1 fix: SHA256(documentHash || documentIdHash) birleşik hash'i imzalanır
       const signature = signDocument(document, keys.privateKey, documentIdHash);
 
       const issuanceDate = new Date().toISOString();
 
-      // Kurul onayı — çelişen çıkarlı üyeler bağımsız olarak doğrular
-      console.log('[Ministry] Kurul onayı isteniyor →', COMMITTEE_URL);
-      const committeeAttestation = await requestCommitteeAttestation(documentHash, documentIdHash);
-      console.log(
-        `[Ministry] ✓ Kurul onayı alındı. signer_count=${committeeAttestation.signerIds.length}`
-      );
+      // Kurul onayı artık bakanlık tarafından alınmıyor.
+      // Nakliyeci (Agent) ZK kanıtını ürettikten sonra kurula sunar.
+      // Kurul, ham belgeyi görmeden ZK proof'u verify edip BLS imzalar.
 
       const vc: UBLPVerifiableCredential = {
         '@context': [
@@ -175,8 +153,9 @@ async function buildServer(keys: KeyPair): Promise<typeof app> {
         credentialSubject: {
           id: holderDid,
           documentId,
-          documentHash,
-          documentIdHash,
+          // documentHash / documentIdHash ÇIKARILDI — fingerprint sızıntısı.
+          // Bakanlık hash'leri imzalama için hesaplar ama VC'ye gömmez.
+          // Agent rawDocument'ten yeniden hesaplar, ZK publicValues'a koyar.
           rawDocument: document,
         },
         proof: {
@@ -187,7 +166,7 @@ async function buildServer(keys: KeyPair): Promise<typeof app> {
           proofValue: signature,
           ministryPublicKey: keys.publicKey,
         },
-        committeeAttestation,
+        // committeeAttestation YOK — kurul agent'ın ZK kanıtını verify ettikten sonra imzalar
       };
 
       console.log('[Ministry] ✓ Verifiable Credential üretildi. ID:', vc.id);

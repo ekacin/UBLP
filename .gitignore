@@ -1,7 +1,30 @@
+# Dependencies
 node_modules/
+
+# Build outputs
 dist/
-ministry/keys/
-l2-verifier-mock/data/
 *.js.map
+
+# Private keys & credentials — NEVER commit
+ministry/keys/
+committee/data/
+ublp-agent/data/
+l2-verifier-mock/data/
+
+# Logs
+*.log
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# SP1 circuit build artifacts
 sp1-circuit/target/
 sp1-circuit/elf/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

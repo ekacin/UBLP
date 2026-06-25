@@ -2,13 +2,12 @@
  * UBLP Kriptografi Modülü
  *
  * Swap noktaları:
- *   poseidon2Hash       → Poseidon2 (ZK field-friendly hash)
- *                         DİKKAT: sp1-circuit/src/main.rs da SHA-256 kullanır.
- *                         İkisi birlikte değişmeli — sadece biri değişirse bakanlık
- *                         imzası ZK devre içinde doğrulanamaz hale gelir.
+ *   sha256Hash          → Poseidon2 ile değiştirilebilir (ZK field-friendly hash)
+ *                         DİKKAT: sp1-circuit/src/main.rs ile EŞ ZAMANLI değişmeli.
+ *                         Sadece biri değişirse bakanlık imzası ZK devre içinde
+ *                         doğrulanamaz hale gelir.
  *   generateZKProof     → SP1 prover network (SP1_PROVER_NETWORK_KEY + ELF gerekli)
  *   generateKeyPair / signDocument / verifySignature → EdDSA/BabyJubJub
- *   verifySignatureOverHash → SP1 proof'ta devre içi constraint olur
  */
 
 import crypto from 'crypto';
@@ -99,11 +98,10 @@ export function canonicalJson(data: unknown): string {
 // ─── Hash ─────────────────────────────────────────────────────────────────────
 
 /**
- * Swap hedef: Poseidon2 (ZK devreleriyle uyumlu, field-friendly).
+ * SHA-256 hash fonksiyonu. İleride Poseidon2 ile değiştirilebilir.
  * UYARI: sp1-circuit/src/main.rs'deki Sha256::digest ile EŞ ZAMANLI değişmeli.
- * Şimdilik SHA-256 stub. Arayüz değişmez.
  */
-export function poseidon2Hash(data: string | Record<string, unknown>): string {
+export function sha256Hash(data: string | Record<string, unknown>): string {
   const input = typeof data === 'string' ? data : canonicalJson(data);
   return crypto.createHash('sha256').update(input).digest('hex');
 }
@@ -111,9 +109,6 @@ export function poseidon2Hash(data: string | Record<string, unknown>): string {
 /**
  * AÇIK-1 fix: documentHash ve documentIdHash'i birbirine kriptografik olarak bağlar.
  * SHA256(documentHash_bytes || documentIdHash_bytes) — 32+32=64 byte input.
- *
- * Bakanlık bu birleşik hash'i imzalar; circuit aynı hesaplamayı devre içinde yapar.
- * Saldırgan documentIdHash'i proof'tan bağımsız olarak değiştiremez.
  */
 export function combinedSignatureHash(documentHash: string, documentIdHash: string): string {
   const combined = Buffer.concat([
@@ -157,14 +152,13 @@ export function generateKeyPair(): KeyPair {
 /**
  * Belgeyi imzalar.
  * AÇIK-1 fix: SHA256(documentHash || documentIdHash) birleşik hash'i imzalanır.
- * documentIdHash zorunlu — ikisi birbirine bağlanmadan imza güvenli değil.
  */
 export function signDocument(
   doc: Record<string, unknown>,
   privateKey: string,
   documentIdHash: string
 ): string {
-  const docHash = Buffer.from(poseidon2Hash(canonicalJson(doc)), 'hex');
+  const docHash = Buffer.from(sha256Hash(canonicalJson(doc)), 'hex');
   const idHash = Buffer.from(documentIdHash, 'hex');
   const combined = Buffer.concat([docHash, idHash]);
   const combinedHash = crypto.createHash('sha256').update(combined).digest();
@@ -184,7 +178,7 @@ export function verifySignature(
   documentIdHash: string
 ): boolean {
   try {
-    const docHash = Buffer.from(poseidon2Hash(canonicalJson(doc)), 'hex');
+    const docHash = Buffer.from(sha256Hash(canonicalJson(doc)), 'hex');
     const idHash = Buffer.from(documentIdHash, 'hex');
     const combined = Buffer.concat([docHash, idHash]);
     const combinedHash = crypto.createHash('sha256').update(combined).digest();
@@ -199,7 +193,7 @@ export function verifySignature(
   }
 }
 
-/** L2 trustless doğrulama — belge içeriği bilinmeden önceden hesaplanmış hash üzerinde verify. */
+/** L2 trustless doğrulama — belge içeriği bilinmeden hash üzerinde verify. */
 export function verifySignatureOverHash(
   hashHex: string,
   signature: string,
@@ -261,7 +255,7 @@ export function generateMockZKProof(
     signature_valid: signatureValid,
     timestamp: Date.now(),
     proof_system: 'mock-ecdsa-p256',
-    public_inputs_hash: poseidon2Hash(canonicalJson(publicInputs)),
+    public_inputs_hash: sha256Hash(canonicalJson(publicInputs)),
     ministrySignature: privateInputs.signature,
     holderPubKeyHash,
   };
@@ -272,8 +266,6 @@ export function generateMockZKProof(
  *
  * SP1_PROVER_NETWORK_KEY + ELF → SP1 Groth16 proof
  * yoksa → mock ECDSA (geliştirme/test)
- *
- * proof_system alanı L2'nin doğrulama stratejisini belirler.
  */
 export async function generateZKProof(
   privateInputs: PrivateInputs,
@@ -285,9 +277,10 @@ export async function generateZKProof(
       throw new Error('SP1 modu: holder auth (holderSignature, holderPublicKey, holderDid) zorunlu.');
     }
 
-    const docCanonical = canonicalJson(privateInputs.rawDocument);
+    // SP1 modunda ham JSON circuit'e gitmez — sadece önceden hesaplanmış documentHash.
+    // Trusted issuer model: Bakanlık hash'i doğru hesaplar; circuit 32 byte alır.
     const result = await generateSP1Proof({
-      documentCanonicalJson: docCanonical,
+      documentHash: publicInputs.documentHash,
       ministrySignature: privateInputs.signature,
       ministryPublicKey: publicInputs.ministryPublicKey,
       documentIdHash: publicInputs.documentIdHash,
@@ -316,7 +309,7 @@ export async function generateZKProof(
       signature_valid: true,
       timestamp: Date.now(),
       proof_system: result.proofSystem,
-      public_inputs_hash: poseidon2Hash(
+      public_inputs_hash: sha256Hash(
         result.publicValues.documentHash +
         result.publicValues.pubKeyHash +
         result.publicValues.documentIdHash +
