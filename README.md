@@ -22,8 +22,8 @@ Each module runs independently. For the ZK Customs module:
 cd modules/zk-customs
 npm install
 npm run dev
+```
 
----
 ## Contributors
 | | |
 |---|---|
