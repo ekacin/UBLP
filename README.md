@@ -37,38 +37,55 @@ Sistemin amacı gümrük memurunun yerine geçmek değil — karar alma sürecin
 
 ## Mimari
 
+### Rol Tanımları
+
+| Servis | Gerçek Dünya Karşılığı | Rol |
+|--------|------------------------|-----|
+| `customs-broker` | Gümrük müşaviri | Belgeyi hazırlar, nakliyeciye iletir — demo istemcisi |
+| `ministry` | Gümrük Bakanlığı | Belgeyi inceler, ECDSA ile imzalar, VC düzenler |
+| `ublp-agent` | Nakliyeci / taşıyıcı firma | VC'yi alır, ZK kanıtı üretir, kurul onayı alır, L2'ye sunar |
+| `committee` | Akredite kurul (ör. ihracatçılar birliği) | ZK doğrular, BLS eşik imzası atar |
+| `l2-verifier-mock` | L2 zinciri | BLS + ZK doğrular, belgeyi settle eder |
+
+### Akış
+
 ```
-Customs Broker
-    │
-    ▼ POST /api/approve
+┌──────────────────────────┐
+│  Gümrük Müşaviri         │  Belgeyi hazırlar. holderDid = nakliyeci DID.
+│  (customs-broker)        │
+└────────┬─────────────────┘
+         │ 1. POST /api/approve  { belge + holderDid }
+         ▼
 ┌─────────────────────┐
-│  Ministry  :3001    │  EC P-256 ECDSA — belgeyi imzalar
-│  (Bakanlık)         │  AES-256-GCM key at rest
+│  Ministry  :3001    │  EC P-256 ECDSA imzalar. VC düzenler.
+│  (Bakanlık)         │  AES-256-GCM key at rest.
 └────────┬────────────┘
-         │ Verifiable Credential (rawDocument + ECDSA sig)
+         │ Verifiable Credential (imzalı)
+         ▼ (müşavir VC'yi nakliyeciye iletir)
+         │ 2. POST /api/process  { verifiableCredential }
          ▼
 ┌─────────────────────┐
 │  UBLP Agent :3002   │  1. VC imzasını doğrula
-│  (Nakliyeci)        │  2. Holder ECDSA sig üret (ZK private input)
-│                     │  3. SP1 ZK Proof üret (mock: ECDSA, prod: Groth16)
-│                     │  4. ZK kanıtını Committee'ye sun (ham belge gitmez)
+│  (Nakliyeci)        │  2. Holder ECDSA sig üret (ZK private input — K-3)
+│                     │  3. ZK Proof üret (mock: ECDSA, prod: SP1 Groth16)
+│                     │  4. ZK kanıtını Kurul'a sun (ham belge gitmez)
 └────────┬────────────┘
-         │ ZK proof
+         │ 3. POST /api/attest  { proofBytes, publicValues }
          ▼
 ┌─────────────────────┐
-│  Committee  :3004   │  ZK proof verify eder → matematiksel ikna
-│  (Kurul)            │  BLS12-381 t-of-n imzalar (2/3)
-│  3 üye, eşik 2/3    │  AES-256-GCM key at rest
+│  Committee  :3004   │  ZK proof verify eder → matematiksel ikna.
+│  (Kurul)            │  BLS12-381 t-of-n imzalar (eşik: 2/3).
+│  3 üye, eşik 2/3    │  AES-256-GCM key at rest.
 └────────┬────────────┘
          │ BLS aggregate attestation
          ▼
 ┌─────────────────────┐
-│  UBLP Agent :3002   │  Verifiable Presentation oluşturur
+│  UBLP Agent :3002   │  Verifiable Presentation oluşturur.
 └────────┬────────────┘
-         │ VP { ZK proof + BLS attestation }
+         │ 4. POST /api/verify-and-settle  { VP }
          ▼
 ┌─────────────────────┐
-│  L2 Verifier :3003  │  1. Whitelist + revocation
+│  L2 Verifier :3003  │  1. Whitelist + revocation check
 │  (L2 Katmanı)       │  2. BLS threshold verify (bağımsız)
 │                     │  3. ZK proof verify (bağımsız)
 │                     │  4. Replay dedup (documentIdHash)
@@ -110,14 +127,16 @@ npm run dev
 
 `npm run dev` şunları yapar (sırayla, paralel):
 1. Tüm workspace'leri derler (`tsc`)
-2. Committee → Ministry → Agent → L2 başlatır
-3. Customs Broker demo akışını çalıştırır
+2. Committee (:3004) başlar → Ministry (:3001) → Agent (:3002) → L2 (:3003)
+3. Gümrük müşaviri demo akışını (`customs-broker`) çalıştırır: belge hazırlar, ministry'den VC alır, agent'a iletir, L2 sonucunu loglar
 
 **Portlar:**
-- `3001` — Ministry (Bakanlık)
-- `3002` — UBLP Agent (Nakliyeci)
+- `3001` — Ministry / Bakanlık
+- `3002` — UBLP Agent / Nakliyeci
 - `3003` — L2 Verifier
-- `3004` — Committee (Kurul)
+- `3004` — Committee / Kurul
+
+> `customs-broker` bir port açmaz — one-shot demo script'i. Üretimde bu rolü gümrük müşavirinin kendi sistemi üstlenir.
 
 ---
 
@@ -161,6 +180,16 @@ PROOF_MODE=dev
 # Opsiyonel
 MINISTRY_URL=http://localhost:3001
 COMMITTEE_URL=http://localhost:3004
+```
+
+### Gümrük Müşaviri (`customs-broker/.env`)
+```env
+# Opsiyonel — varsayılanlar dev için çalışır
+MINISTRY_URL=http://localhost:3001
+UBLP_AGENT_URL=http://localhost:3002
+
+# Belgeye gömülecek nakliyeci DID'i — Agent'ın AGENT_DID'i ile eşleşmeli
+AGENT_DID=did:ublp:agent:default
 ```
 
 ### SP1 (Gerçek ZK için — opsiyonel)
