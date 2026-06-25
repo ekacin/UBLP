@@ -54,7 +54,7 @@ export interface PrivateInputs {
 }
 
 export interface PublicInputs {
-  /** SHA256(canonicalJson(document)) — ministry'nin imzaladığı değer */
+  /** SHA256("ublp-doc-v1:" + canonicalJson(document)) — domain-separated, ministry imzasıyla bağlı */
   documentHash: string;
   ministryPublicKey: string;
   /** SHA256(documentId) — replay dedup anahtarı; SP1 proof'a bağlı */
@@ -104,6 +104,19 @@ export function canonicalJson(data: unknown): string {
 export function sha256Hash(data: string | Record<string, unknown>): string {
   const input = typeof data === 'string' ? data : canonicalJson(data);
   return crypto.createHash('sha256').update(input).digest('hex');
+}
+
+// Domain separation prefix — cross-protocol hash collision prevention.
+// Circuit, agent ve ministry bu sabitten okur; değişirse tüm üçü güncellenmeli.
+const DOCUMENT_HASH_DOMAIN = 'ublp-doc-v1:';
+
+/**
+ * SHA256("ublp-doc-v1:" + canonicalJson(doc))
+ * Belge hash'leri için domain-separated versiyon. Genel sha256Hash'ten ayrı tutulur
+ * çünkü documentIdHash / pubKeyHash bu prefix'i kullanmaz.
+ */
+export function sha256HashDocument(doc: Record<string, unknown>): string {
+  return crypto.createHash('sha256').update(DOCUMENT_HASH_DOMAIN + canonicalJson(doc)).digest('hex');
 }
 
 /**
@@ -158,7 +171,7 @@ export function signDocument(
   privateKey: string,
   documentIdHash: string
 ): string {
-  const docHash = Buffer.from(sha256Hash(canonicalJson(doc)), 'hex');
+  const docHash = Buffer.from(sha256HashDocument(doc), 'hex');
   const idHash = Buffer.from(documentIdHash, 'hex');
   const combined = Buffer.concat([docHash, idHash]);
   const combinedHash = crypto.createHash('sha256').update(combined).digest();
@@ -178,7 +191,7 @@ export function verifySignature(
   documentIdHash: string
 ): boolean {
   try {
-    const docHash = Buffer.from(sha256Hash(canonicalJson(doc)), 'hex');
+    const docHash = Buffer.from(sha256HashDocument(doc), 'hex');
     const idHash = Buffer.from(documentIdHash, 'hex');
     const combined = Buffer.concat([docHash, idHash]);
     const combinedHash = crypto.createHash('sha256').update(combined).digest();

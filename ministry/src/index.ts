@@ -7,6 +7,7 @@ import {
   generateKeyPair,
   signDocument,
   sha256Hash,
+  sha256HashDocument,
   canonicalJson,
   KeyPair,
   UBLPVerifiableCredential,
@@ -129,7 +130,7 @@ async function buildServer(keys: KeyPair): Promise<typeof app> {
 
       console.log('[Ministry] Gümrük belgesi alındı. ID:', documentId);
 
-      const documentHash = sha256Hash(canonicalJson(document));
+      const documentHash = sha256HashDocument(document);  // domain: ublp-doc-v1:
       const documentIdHash = sha256Hash(documentId);
 
       // AÇIK-1 fix: SHA256(documentHash || documentIdHash) birleşik hash'i imzalanır
