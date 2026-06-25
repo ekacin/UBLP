@@ -1,11 +1,14 @@
 {
   "name": "@ublp/shared",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "main": "dist/crypto/mockCrypto.js",
   "types": "dist/crypto/mockCrypto.d.ts",
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@noble/bls12-381": "^1.4.0"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",

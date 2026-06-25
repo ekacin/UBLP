@@ -1,23 +1,27 @@
 {
   "name": "ublp",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "private": true,
   "workspaces": [
     "shared",
+    "committee",
     "ministry",
     "ublp-agent",
     "l2-verifier-mock",
     "customs-broker"
   ],
   "scripts": {
+    "build": "npm run build --workspaces --if-present",
     "build:shared": "npm run build -w shared",
+    "start:committee": "npm run start -w committee",
     "start:ministry": "npm run start -w ministry",
     "start:agent": "npm run start -w ublp-agent",
     "start:l2": "npm run start -w l2-verifier-mock",
     "run:broker": "npm run start -w customs-broker",
-    "dev": "concurrently \"npm run start:ministry\" \"npm run start:agent\" \"npm run start:l2\""
+    "dev": "npm run build && concurrently --kill-others -n \"COMMITTEE,MINISTRY,AGENT,L2,BROKER\" -c \"cyan,green,magenta,blue,yellow\" \"npm run start:committee\" \"wait-on tcp:3004 && npm run start:ministry\" \"wait-on tcp:3001 && npm run start:agent\" \"wait-on tcp:3002 && npm run start:l2\" \"wait-on tcp:3001 tcp:3002 tcp:3003 tcp:3004 && npm run run:broker\""
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "wait-on": "^9.0.10"
   }
 }
