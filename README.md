@@ -1,4 +1,4 @@
-# UBLP — Unified Blockchain Logistics Protocol
+# UBLP — Universal Blockchain Logistics Protocol
 
 Lojistik süreçlerini uçtan uca kriptografik güvence altına alan çok modüllü açık protokol.
 
@@ -30,7 +30,7 @@ npm run dev
 
 | | |
 |---|---|
-| **Efe Kaan Açın** | Mimar, geliştirici — [acinefekaan@gmail.com](mailto:acinefekaan@gmail.com) |
+| **Efe Kaan Açin** | Mimar, geliştirici |
 | **Claude (Anthropic)** | ZK devre tasarımı, kriptografi danışmanlığı, güvenlik denetimi |
 
 ---
