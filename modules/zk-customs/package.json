@@ -18,10 +18,20 @@
     "start:agent": "npm run start -w ublp-agent",
     "start:l2": "npm run start -w l2-verifier-mock",
     "run:broker": "npm run start -w customs-broker",
-    "dev": "npm run build && concurrently --kill-others -n \"COMMITTEE,MINISTRY,AGENT,L2,BROKER\" -c \"cyan,green,magenta,blue,yellow\" \"npm run start:committee\" \"wait-on tcp:3004 && npm run start:ministry\" \"wait-on tcp:3001 && npm run start:agent\" \"wait-on tcp:3002 && npm run start:l2\" \"wait-on tcp:3001 tcp:3002 tcp:3003 tcp:3004 && npm run run:broker\""
+    "dev": "npm run build && concurrently --kill-others -n \"COMMITTEE,MINISTRY,AGENT,L2,BROKER\" -c \"cyan,green,magenta,blue,yellow\" \"npm run start:committee\" \"wait-on tcp:3004 && npm run start:ministry\" \"wait-on tcp:3001 && npm run start:agent\" \"wait-on tcp:3002 && npm run start:l2\" \"wait-on tcp:3001 tcp:3002 tcp:3003 tcp:3004 && npm run run:broker\"",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit/",
+    "test:integration": "vitest run tests/integration/",
+    "test:negative": "vitest run tests/negative/",
+    "test:e2e": "vitest run tests/integration/e2e.test.ts",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "^2.1.0",
     "concurrently": "^8.2.2",
+    "typescript": "^5.4.5",
+    "vitest": "^2.1.0",
     "wait-on": "^9.0.10"
   }
 }

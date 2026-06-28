@@ -30,3 +30,10 @@ dist/
 Thumbs.db
 .vscode/
 .idea/
+
+# Test coverage reports
+coverage/
+**/coverage/
+
+# Test temp files
+**/tmp/
