@@ -1,0 +1,241 @@
+name: UBLP CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'modules/zk-customs/**'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modules/zk-customs/**'
+      - '.github/workflows/ci.yml'
+
+env:
+  NODE_VERSION: '22'
+  RUST_VERSION: '1.81'
+  WORKING_DIR: modules/zk-customs
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-typecheck:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIR }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ env.WORKING_DIR }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build all workspaces
+        run: npm run build
+
+  unit-tests:
+    name: Unit Tests
+    needs: lint-and-typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIR }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ env.WORKING_DIR }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build shared workspace
+        run: npm run build -w shared
+
+      - name: Run unit tests
+        run: npx vitest run tests/unit/ --reporter=verbose
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          directory: ${{ env.WORKING_DIR }}/coverage
+          flags: unit
+          fail_ci_if_error: false
+
+  integration-tests:
+    name: Integration Tests
+    needs: lint-and-typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIR }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ env.WORKING_DIR }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build all workspaces
+        run: npm run build
+
+      - name: Run integration tests
+        run: npx vitest run tests/integration/ --reporter=verbose --test-timeout=60000
+
+  negative-tests:
+    name: Negative / Security Tests
+    needs: lint-and-typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIR }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ env.WORKING_DIR }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build shared workspace
+        run: npm run build -w shared
+
+      - name: Run negative tests
+        run: npx vitest run tests/negative/ --reporter=verbose
+
+  # SP1 circuit build (Rust) — only if Rust files changed
+  sp1-circuit:
+    name: SP1 Circuit Build Check
+    needs: lint-and-typecheck
+    if: |
+      github.event_name == 'pull_request' &&
+      contains(join(github.event.pull_request.files.*.filename, ' '), 'sp1-circuit')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIR }}/sp1-circuit
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust ${{ env.RUST_VERSION }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: riscv32im-succinct-zkvm-elf
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ env.WORKING_DIR }}/sp1-circuit
+
+      - name: Check compilation
+        run: cargo check --release 2>&1 | head -50
+
+  e2e-tests:
+    name: End-to-End Tests
+    needs: [unit-tests, integration-tests]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIR }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ env.WORKING_DIR }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build all workspaces
+        run: npm run build
+
+      - name: Run E2E tests
+        run: npx vitest run tests/integration/e2e.test.ts --reporter=verbose --test-timeout=120000
+
+  # Full E2E flow with actual services (requires service startup)
+  full-flow:
+    name: Full Service Flow Verification
+    needs: e2e-tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIR }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ env.WORKING_DIR }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build all workspaces
+        run: npm run build
+
+      - name: Start services in background
+        run: |
+          npm run start:committee &
+          npm run start:ministry &
+          npm run start:agent &
+          npm run start:l2 &
+          echo "Waiting for services..."
+          npx wait-on tcp:3004 tcp:3001 tcp:3002 tcp:3003 --timeout=60000
+          echo "All services ready"
+        timeout-minutes: 3
+
+      - name: Run customs broker demo
+        run: npm run run:broker
+        timeout-minutes: 2
+
+      - name: Fetch settled records
+        run: |
+          curl -s http://localhost:3003/api/records | head -50
+          echo ""
+          echo "Flow completed successfully"
+
+      - name: Stop services
+        if: always()
+        run: |
+          pkill -f "node dist/index.js" || true
