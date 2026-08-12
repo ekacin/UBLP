@@ -5,17 +5,31 @@ on:
     branches: [main, develop]
     paths:
       - 'modules/zk-customs/**'
+      - 'modules/incoterms-escrow/**'
+      - 'shared/**'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/ci.yml'
   pull_request:
     branches: [main]
     paths:
       - 'modules/zk-customs/**'
+      - 'modules/incoterms-escrow/**'
+      - 'shared/**'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/ci.yml'
 
 env:
   NODE_VERSION: '22'
   RUST_VERSION: '1.81'
-  WORKING_DIR: modules/zk-customs
+  COMPACT_VERSION: '0.31.1'
+  # GitHub-hosted runners ship a pre-installed Rust toolchain, and the Compact
+  # installer auto-detects $HOME/.cargo and installs there instead of
+  # $HOME/.local/bin when that directory exists. Force it explicitly so the
+  # path we add to GITHUB_PATH below always matches where the binary lands.
+  COMPACT_INSTALL_DIR: /home/runner/.local/bin
+  ZK_CUSTOMS_DIR: modules/zk-customs
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -25,9 +39,6 @@ jobs:
   lint-and-typecheck:
     name: Lint & Type Check
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ${{ env.WORKING_DIR }}
 
     steps:
       - uses: actions/checkout@v4
@@ -37,10 +48,20 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: ${{ env.WORKING_DIR }}/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Install Compact CLI
+        run: |
+          curl -sSLf https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Compile Escrow contract
+        run: |
+          compact update ${{ env.COMPACT_VERSION }}
+          npm run compile:contract -w @ublp/incoterms-escrow
 
       - name: Build all workspaces
         run: npm run build
@@ -49,9 +70,6 @@ jobs:
     name: Unit Tests
     needs: lint-and-typecheck
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ${{ env.WORKING_DIR }}
 
     steps:
       - uses: actions/checkout@v4
@@ -61,21 +79,21 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: ${{ env.WORKING_DIR }}/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
       - name: Build shared workspace
-        run: npm run build -w shared
+        run: npm run build:shared
 
       - name: Run unit tests
-        run: npx vitest run tests/unit/ --reporter=verbose
+        run: npm run test:unit
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
-          directory: ${{ env.WORKING_DIR }}/coverage
+          directory: ${{ env.ZK_CUSTOMS_DIR }}/coverage
           flags: unit
           fail_ci_if_error: false
 
@@ -83,9 +101,6 @@ jobs:
     name: Integration Tests
     needs: lint-and-typecheck
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ${{ env.WORKING_DIR }}
 
     steps:
       - uses: actions/checkout@v4
@@ -95,24 +110,31 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: ${{ env.WORKING_DIR }}/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Install Compact CLI
+        run: |
+          curl -sSLf https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Compile Escrow contract
+        run: |
+          compact update ${{ env.COMPACT_VERSION }}
+          npm run compile:contract -w @ublp/incoterms-escrow
 
       - name: Build all workspaces
         run: npm run build
 
       - name: Run integration tests
-        run: npx vitest run tests/integration/ --reporter=verbose --test-timeout=60000
+        run: npm run test:integration -- --test-timeout=60000
 
   negative-tests:
     name: Negative / Security Tests
     needs: lint-and-typecheck
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ${{ env.WORKING_DIR }}
 
     steps:
       - uses: actions/checkout@v4
@@ -122,16 +144,50 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: ${{ env.WORKING_DIR }}/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
       - name: Build shared workspace
-        run: npm run build -w shared
+        run: npm run build:shared
 
       - name: Run negative tests
-        run: npx vitest run tests/negative/ --reporter=verbose
+        run: npm run test:negative
+
+  incoterms-escrow-tests:
+    name: Incoterms Escrow (Module 4) Tests
+    needs: lint-and-typecheck
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Compact CLI
+        run: |
+          curl -sSLf https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Compile Escrow contract
+        run: |
+          compact update ${{ env.COMPACT_VERSION }}
+          npm run compile:contract -w @ublp/incoterms-escrow
+
+      - name: Build shared workspace
+        run: npm run build:shared
+
+      - name: Run incoterms-escrow tests
+        run: npm run test:incoterms-escrow
 
   # SP1 circuit build (Rust) — only if Rust files changed
   sp1-circuit:
@@ -143,7 +199,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ${{ env.WORKING_DIR }}/sp1-circuit
+        working-directory: ${{ env.ZK_CUSTOMS_DIR }}/sp1-circuit
 
     steps:
       - uses: actions/checkout@v4
@@ -157,7 +213,7 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: ${{ env.WORKING_DIR }}/sp1-circuit
+          workspaces: ${{ env.ZK_CUSTOMS_DIR }}/sp1-circuit
 
       - name: Check compilation
         run: cargo check --release 2>&1 | head -50
@@ -166,9 +222,6 @@ jobs:
     name: End-to-End Tests
     needs: [unit-tests, integration-tests]
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ${{ env.WORKING_DIR }}
 
     steps:
       - uses: actions/checkout@v4
@@ -178,25 +231,32 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: ${{ env.WORKING_DIR }}/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Install Compact CLI
+        run: |
+          curl -sSLf https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Compile Escrow contract
+        run: |
+          compact update ${{ env.COMPACT_VERSION }}
+          npm run compile:contract -w @ublp/incoterms-escrow
 
       - name: Build all workspaces
         run: npm run build
 
       - name: Run E2E tests
-        run: npx vitest run tests/integration/e2e.test.ts --reporter=verbose --test-timeout=120000
+        run: npm run test:e2e -- --test-timeout=120000
 
   # Full E2E flow with actual services (requires service startup)
   full-flow:
     name: Full Service Flow Verification
     needs: e2e-tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ${{ env.WORKING_DIR }}
 
     steps:
       - uses: actions/checkout@v4
@@ -206,10 +266,20 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: ${{ env.WORKING_DIR }}/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Install Compact CLI
+        run: |
+          curl -sSLf https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Compile Escrow contract
+        run: |
+          compact update ${{ env.COMPACT_VERSION }}
+          npm run compile:contract -w @ublp/incoterms-escrow
 
       - name: Build all workspaces
         run: npm run build
