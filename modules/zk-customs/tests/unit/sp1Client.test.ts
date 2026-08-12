@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { pubKeyPemToRaw } from '../../shared/src/crypto/sp1Client';
-import { generateKeyPair } from '../../shared/src/crypto/mockCrypto';
+import { pubKeyPemToRaw } from '../../../../shared/src/crypto/sp1Client';
+import { generateKeyPair } from '../../../../shared/src/crypto/documentCrypto';
 
 describe('pubKeyPemToRaw', () => {
   it('converts PEM SPKI to 65-byte uncompressed SEC1', () => {
@@ -29,7 +29,7 @@ describe('pubKeyPemToRaw', () => {
 
 describe('sp1Available', () => {
   it('returns false when SP1 env is not set', async () => {
-    const { sp1Available } = await import('../../shared/src/crypto/sp1Client');
+    const { sp1Available } = await import('../../../../shared/src/crypto/sp1Client');
     expect(sp1Available()).toBe(false);
   });
 });

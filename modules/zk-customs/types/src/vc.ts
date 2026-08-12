@@ -101,12 +101,12 @@ export interface L2SettleRecord {
   documentIdHash: string;
   ministryPublicKeyHash: string;
   holderDid: string;
-  status: 'ONAYLANDI' | 'REDDEDILDI' | 'SUSPICIOUS';
+  status: 'APPROVED' | 'REJECTED' | 'SUSPICIOUS';
   settledAt: string;
   proofSystem: string;
 }
 
 export interface L2SettleResponse {
-  status: 'ONAYLANDI' | 'REDDEDILDI';
+  status: 'APPROVED' | 'REJECTED';
   record: L2SettleRecord;
 }

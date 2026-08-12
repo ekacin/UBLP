@@ -6,7 +6,7 @@ import type {
   VPProofPublicValues,
   L2SettleRecord,
   L2SettleResponse,
-} from '../../shared/src/types/vc';
+} from '../../types/src/vc';
 
 describe('VC type structure', () => {
   it('UBLPVerifiableCredential has required fields', () => {
@@ -156,12 +156,12 @@ describe('L2 types', () => {
       documentIdHash: 'cd'.repeat(32),
       ministryPublicKeyHash: 'ef'.repeat(32),
       holderDid: 'did:ublp:agent:test',
-      status: 'ONAYLANDI',
+      status: 'APPROVED',
       settledAt: '2025-01-15T11:00:00.000Z',
       proofSystem: 'mock-ecdsa-p256',
     };
 
-    expect(record.status).toBe('ONAYLANDI');
+    expect(record.status).toBe('APPROVED');
     expect(record.documentHash).toHaveLength(64);
     expect(record.documentIdHash).toHaveLength(64);
   });
@@ -182,13 +182,13 @@ describe('L2 types', () => {
 
   it('L2SettleResponse wraps status and record', () => {
     const response: L2SettleResponse = {
-      status: 'ONAYLANDI',
+      status: 'APPROVED',
       record: {
         documentHash: 'ab'.repeat(32),
         documentIdHash: 'cd'.repeat(32),
         ministryPublicKeyHash: 'ef'.repeat(32),
         holderDid: 'did:ublp:agent:test',
-        status: 'ONAYLANDI',
+        status: 'APPROVED',
         settledAt: '2025-01-15T11:00:00.000Z',
         proofSystem: 'mock-ecdsa-p256',
       },

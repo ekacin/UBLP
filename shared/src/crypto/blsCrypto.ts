@@ -1,14 +1,15 @@
 /**
- * BLS12-381 threshold imza primitifleri (@noble/bls12-381)
+ * BLS12-381 threshold signature primitives (@noble/bls12-381)
  *
- * Scheme: min-pubkey-size (G1 pubkey 48 byte, G2 sig 96 byte)
+ * Scheme: min-pubkey-size (G1 pubkey 48 bytes, G2 sig 96 bytes)
  * Aggregation: same-message — aggSig = agg(sig_i...), aggPk = agg(pk_i...)
  *              bls.verify(aggSig, msg, aggPk) === true iff all partial sigs valid
  *
- * t-of-n doğrulama:
- *   - groupKeyHash = SHA256(sorted ALL n member pubkeys) — statik, L2 sync'te alınır
- *   - Attestation yalnızca hangi t üyenin imzaladığını (signerIds) + aggSig taşır
- *   - L2 kendi deposundaki pubkeys'den lookup yapar — attestation'daki pubkey'lere güvenmez (K-2 fix)
+ * t-of-n verification:
+ *   - groupKeyHash = SHA256(sorted ALL n member pubkeys) — static, obtained at L2 sync
+ *   - An Attestation only carries which t members signed (signerIds) + aggSig
+ *   - L2 looks pubkeys up from its own store — never trusts the pubkeys inside the
+ *     attestation itself (K-2 fix)
  */
 
 import crypto from 'crypto';
@@ -64,8 +65,8 @@ export function blsAggregatePublicKeys(pubKeyHexes: string[]): string {
 
 /**
  * K-2 fix: groupKeyHash = SHA256(sorted ALL n member pubkeys concatenated)
- * Statik — tam üye listesi değişmeden değişmez.
- * Attestation içindeki signer subset'i bu hash'i etkilemez.
+ * Static — doesn't change unless the full member list changes.
+ * The signer subset inside a given attestation has no effect on this hash.
  */
 export function blsGroupKeyHash(allMemberPubKeyHexes: string[]): string {
   const sorted = [...allMemberPubKeyHexes].sort();
@@ -74,9 +75,9 @@ export function blsGroupKeyHash(allMemberPubKeyHexes: string[]): string {
 }
 
 /**
- * t-of-n BLS doğrulama (K-2 fix).
- * signerPubKeyHexes: L2'nin kendi deposundan lookup'lanan pubkey'ler (attestation'dakiler değil).
- * msgHex: doğrulama mesajı (kombinasyon hash).
+ * t-of-n BLS verification (K-2 fix).
+ * signerPubKeyHexes: pubkeys looked up from L2's own store (not the ones inside the attestation).
+ * msgHex: the verification message (combined hash).
  */
 export async function blsVerifyThreshold(
   aggSigHex: string,
@@ -87,10 +88,10 @@ export async function blsVerifyThreshold(
   if (signerPubKeyHexes.length < threshold) {
     return {
       valid: false,
-      reason: `Eşik sağlanamadı: ${signerPubKeyHexes.length} < ${threshold}`,
+      reason: `Threshold not met: ${signerPubKeyHexes.length} < ${threshold}`,
     };
   }
   const aggPubKey = blsAggregatePublicKeys(signerPubKeyHexes);
   const ok = await blsVerify(aggSigHex, msgHex, aggPubKey);
-  return ok ? { valid: true } : { valid: false, reason: 'BLS aggregate verify başarısız.' };
+  return ok ? { valid: true } : { valid: false, reason: 'BLS aggregate verify failed.' };
 }

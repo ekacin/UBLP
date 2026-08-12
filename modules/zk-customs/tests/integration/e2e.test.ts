@@ -19,12 +19,7 @@ import {
   generateMockZKProof,
   PrivateInputs,
   PublicInputs,
-  UBLPVerifiableCredential,
-  UBLPVerifiablePresentation,
-  CommitteeAttestation,
-  L2SettleRecord,
-  L2SettleResponse,
-} from '../../shared/src/crypto/mockCrypto';
+} from '../../../../shared/src/crypto/documentCrypto';
 import {
   blsGenerateKeyPair,
   blsSign,
@@ -33,7 +28,14 @@ import {
   blsAggregatePublicKeys,
   blsGroupKeyHash,
   blsVerifyThreshold,
-} from '../../shared/src/crypto/blsCrypto';
+} from '../../../../shared/src/crypto/blsCrypto';
+import {
+  UBLPVerifiableCredential,
+  UBLPVerifiablePresentation,
+  CommitteeAttestation,
+  L2SettleRecord,
+  L2SettleResponse,
+} from '../../types/src/vc';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -268,7 +270,7 @@ async function buildL2Verifier(): Promise<{ app: ReturnType<typeof Fastify>; por
           documentIdHash,
           ministryPublicKeyHash: sha256Hash(ministryPublicKey),
           holderDid: presentation.holder,
-          status: 'ONAYLANDI',
+          status: 'APPROVED',
           settledAt: new Date().toISOString(),
           proofSystem: vpProof.proofSystem,
         };
@@ -276,7 +278,7 @@ async function buildL2Verifier(): Promise<{ app: ReturnType<typeof Fastify>; por
         db.push(record);
         fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
 
-        return reply.status(200).send({ status: 'ONAYLANDI' as const, record });
+        return reply.status(200).send({ status: 'APPROVED' as const, record });
       });
     }
   );
@@ -426,7 +428,7 @@ describe('E2E: Complete Customs Clearance Flow', () => {
     });
     expect(l2Res.status).toBe(200);
     const l2Result: L2SettleResponse = await l2Res.json();
-    expect(l2Result.status).toBe('ONAYLANDI');
+    expect(l2Result.status).toBe('APPROVED');
     expect(l2Result.record.documentHash).toBe(presentation.proof.publicValues.documentHash);
     expect(l2Result.record.documentIdHash).toBe(presentation.proof.publicValues.documentIdHash);
     expect(l2Result.record.proofSystem).toBe('mock-ecdsa-p256');

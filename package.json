@@ -1,0 +1,41 @@
+{
+  "name": "ublp",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "shared",
+    "modules/zk-customs/types",
+    "modules/zk-customs/committee",
+    "modules/zk-customs/ministry",
+    "modules/zk-customs/ublp-agent",
+    "modules/zk-customs/l2-verifier-mock",
+    "modules/zk-customs/customs-broker",
+    "modules/incoterms-escrow"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "build:shared": "npm run build -w shared",
+    "test:incoterms-escrow": "cd modules/incoterms-escrow && vitest run",
+    "compile:escrow-contract": "npm run compile:contract -w @ublp/incoterms-escrow",
+    "start:committee": "npm run start -w @ublp/committee",
+    "start:ministry": "npm run start -w @ublp/ministry",
+    "start:agent": "npm run start -w @ublp/ublp-agent",
+    "start:l2": "npm run start -w @ublp/l2-verifier-mock",
+    "run:broker": "npm run start -w @ublp/customs-broker",
+    "dev:zk-customs": "npm run build && concurrently --kill-others -n \"COMMITTEE,MINISTRY,AGENT,L2,BROKER\" -c \"cyan,green,magenta,blue,yellow\" \"npm run start:committee\" \"wait-on tcp:3004 && npm run start:ministry\" \"wait-on tcp:3001 && npm run start:agent\" \"wait-on tcp:3002 && npm run start:l2\" \"wait-on tcp:3001 tcp:3002 tcp:3003 tcp:3004 && npm run run:broker\"",
+    "test": "cd modules/zk-customs && vitest run",
+    "test:unit": "cd modules/zk-customs && vitest run tests/unit/",
+    "test:integration": "cd modules/zk-customs && vitest run tests/integration/",
+    "test:negative": "cd modules/zk-customs && vitest run tests/negative/",
+    "test:e2e": "cd modules/zk-customs && vitest run tests/integration/e2e.test.ts",
+    "test:watch": "cd modules/zk-customs && vitest",
+    "test:coverage": "cd modules/zk-customs && vitest run --coverage"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^2.1.0",
+    "concurrently": "^8.2.2",
+    "typescript": "^5.4.5",
+    "vitest": "^2.1.0",
+    "wait-on": "^9.0.10"
+  }
+}

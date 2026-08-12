@@ -33,9 +33,9 @@ import {
   combinedSignatureHash,
   verifySignatureOverHash,
   sp1VerifyProof,
-  CommitteeAttestation,
   BLSKeyPair,
 } from '@ublp/shared';
+import { CommitteeAttestation } from '@ublp/zk-customs-types';
 
 const app = Fastify({ logger: false });
 const MEMBERS_PATH = path.join(__dirname, '..', 'data', 'members.json');

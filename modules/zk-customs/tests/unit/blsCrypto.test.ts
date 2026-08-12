@@ -7,7 +7,7 @@ import {
   blsAggregatePublicKeys,
   blsGroupKeyHash,
   blsVerifyThreshold,
-} from '../../shared/src/crypto/blsCrypto';
+} from '../../../../shared/src/crypto/blsCrypto';
 import { TEST_BLS_MEMBER_IDS } from '../fixtures/keys';
 
 function generateBLSKeyPairs(n: number): Array<{ privateKey: string; publicKey: string; memberId: string }> {
@@ -168,7 +168,7 @@ describe('blsVerifyThreshold', () => {
 
     const result = await blsVerifyThreshold(aggSig, msg, signerPubs, 2);
     expect(result.valid).toBe(false);
-    expect(result.reason).toContain('Eşik');
+    expect(result.reason).toContain('Threshold');
   });
 
   it('fails with wrong message', async () => {

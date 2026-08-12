@@ -12,7 +12,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov', 'html'],
-      include: ['shared/src/**/*.ts', 'ministry/src/**/*.ts', 'committee/src/**/*.ts', 'ublp-agent/src/**/*.ts', 'l2-verifier-mock/src/**/*.ts'],
+      include: ['../../shared/src/**/*.ts', 'types/src/**/*.ts', 'ministry/src/**/*.ts', 'committee/src/**/*.ts', 'ublp-agent/src/**/*.ts', 'l2-verifier-mock/src/**/*.ts'],
     },
     pool: 'forks',
     poolOptions: {

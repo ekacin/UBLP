@@ -94,10 +94,10 @@ Test attack vectors and edge cases:
 
 | Component | Target Coverage | Current |
 |-----------|----------------|---------|
-| `shared/src/crypto/mockCrypto.ts` | 95%+ | — |
-| `shared/src/crypto/blsCrypto.ts` | 95%+ | — |
-| `shared/src/crypto/sp1Client.ts` | 80%+ | — |
-| `shared/src/types/vc.ts` | 100% | — |
+| `shared/src/crypto/documentCrypto.ts` (root, was `mockCrypto.ts`) | 95%+ | — |
+| `shared/src/crypto/blsCrypto.ts` (root) | 95%+ | — |
+| `shared/src/crypto/sp1Client.ts` (root) | 80%+ | — |
+| `types/src/vc.ts` (was `shared/src/types/vc.ts`) | 100% | — |
 | `ministry/src/index.ts` | 70%+ | — |
 | `committee/src/index.ts` | 70%+ | — |
 | `ublp-agent/src/index.ts` | 70%+ | — |
@@ -126,7 +126,7 @@ The test suite runs automatically via GitHub Actions (see `.github/workflows/ci.
 Example:
 ```typescript
 import { describe, it, expect } from 'vitest';
-import { sha256Hash } from '../../shared/src/crypto/mockCrypto';
+import { sha256Hash } from '../../../../shared/src/crypto/documentCrypto';
 
 describe('sha256Hash', () => {
   it('produces 64-char hex', () => {

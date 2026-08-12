@@ -13,15 +13,16 @@ import {
   verifySignatureOverHash,
   combinedSignatureHash,
   verifySignature,
+} from '../../../../shared/src/crypto/documentCrypto';
+import {
   UBLPVerifiablePresentation,
   UBLPVerifiableCredential,
   CommitteeAttestation,
   L2SettleRecord,
   L2SettleResponse,
-  l2verifier as l2Module,
-} from '../../shared/src/crypto/mockCrypto';
+} from '../../types/src/vc';
 
-import type { blsVerifyThreshold, blsGroupKeyHash } from '../../shared/src/crypto/blsCrypto';
+import type { blsVerifyThreshold, blsGroupKeyHash } from '../../../../shared/src/crypto/blsCrypto';
 
 const ministryKeys = generateKeyPair();
 const unauthorizedKeys = generateKeyPair();
@@ -92,7 +93,7 @@ async function buildTestL2Verifier() {
           documentIdHash,
           ministryPublicKeyHash: sha256Hash(ministryPublicKey),
           holderDid: presentation.holder,
-          status: 'ONAYLANDI',
+          status: 'APPROVED',
           settledAt: new Date().toISOString(),
           proofSystem: vpProof.proofSystem,
         };
@@ -100,7 +101,7 @@ async function buildTestL2Verifier() {
         db.push(record);
         fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
 
-        const response: L2SettleResponse = { status: 'ONAYLANDI', record };
+        const response: L2SettleResponse = { status: 'APPROVED', record };
         return reply.status(200).send(response);
       });
     }
@@ -230,9 +231,9 @@ describe('L2 Verifier Integration', () => {
 
     expect(res.status).toBe(200);
     const result: L2SettleResponse = await res.json();
-    expect(result.status).toBe('ONAYLANDI');
+    expect(result.status).toBe('APPROVED');
     expect(result.record.documentHash).toBe(vp.proof.publicValues.documentHash);
-    expect(result.record.status).toBe('ONAYLANDI');
+    expect(result.record.status).toBe('APPROVED');
   });
 
   it('POST /api/verify-and-settle rejects replay (same documentIdHash)', async () => {
@@ -345,7 +346,7 @@ describe('L2 Verifier Integration', () => {
     for (const r of records) {
       expect(r.documentHash).toHaveLength(64);
       expect(r.documentIdHash).toHaveLength(64);
-      expect(r.status).toMatch(/^(ONAYLANDI|REDDEDILDI|SUSPICIOUS)$/);
+      expect(r.status).toMatch(/^(APPROVED|REJECTED|SUSPICIOUS)$/);
     }
   });
 });

@@ -12,7 +12,7 @@ import {
   UBLPVerifiableCredential,
   UBLPVerifiablePresentation,
   L2SettleResponse,
-} from '@ublp/shared';
+} from '@ublp/zk-customs-types';
 
 const MINISTRY_URL = process.env.MINISTRY_URL ?? 'http://localhost:3001';
 const UBLP_AGENT_URL = process.env.UBLP_AGENT_URL ?? 'http://localhost:3002';

@@ -1,0 +1,145 @@
+// UBLP Module 4 — INCOTERMS Settlement (Escrow). See AGENTS.md Section 5.
+//
+// v0.1 scope: FOB only (Section 5.2). The other 10 rules will be added incrementally
+// following the same pattern.
+//
+// State machine: Empty -> Proposed -> Locked -> Released
+//   - Proposed: seller "creates the offer" (Section 5.12 step 1) — fixes the terms,
+//     including C's identity.
+//   - Locked: buyer "locks the funds" (Section 5.12 step 2) — locking is a PRECONDITION
+//     for shipping to start (Section 7.5), not a step that happens afterward.
+//   - Released: point (c) triggers payout in TWO SEPARATE circuits (see AGENTS.md 5.14.1,
+//     "don't give C data irrelevant to its job"):
+//       1. `attestLoadingConfirmed` — callable only by C, proves only C's own identity.
+//          C's role stops there — it never touches financial data (least privilege).
+//       2. `claimPayout` — callable by anyone once attested (in practice the seller's own
+//          agent, since it wants the funds); verifies the coin/address commitments and pays.
+//     The 7-day timeout (Section 7.2) is a separate safety net that releases to the seller
+//     if C never attests / a dispute never resolves — it doesn't require attestation.
+//
+// PRIVACY — two independent commitment patterns, same rationale for both:
+//   1. Fund custody (shielded): coin data always comes from a witness; the ledger only
+//      stores a persistentCommit hash — the amount never reaches the chain in plaintext.
+//   2. Seller's payout address: never written to the ledger directly (that would leak
+//      "A paid B", exactly what we're trying to hide). Instead only a commitment is stored;
+//      the real address is supplied via witness at payout time and checked against it. This
+//      keeps the address both private AND immutable — `releaseOnTimeout` is deliberately
+//      unauthenticated (anyone can call it, that's the point of a safety net), so if the
+//      address could be supplied freely at that point, funds could be redirected anywhere.
+//      `buyerAddress` was dropped entirely — v0.1 has no refund-to-buyer path, and keeping
+//      even an unused field public has a real privacy cost.
+//
+// (See AGENTS.md 5.14.1 for the experiment that validated this commitment pattern.)
+pragma language_version >= 0.22;
+
+import CompactStandardLibrary;
+
+export enum EscrowState { Empty, Proposed, Locked, Released }
+
+struct CoinCore {
+  nonce: Bytes<32>,
+  color: Bytes<32>,
+  value: Uint<128>
+}
+
+export ledger state: EscrowState;
+
+// Terms fixed at propose time — immutable afterward.
+export ledger sellerKeyHash: Bytes<32>;
+export ledger portAuthorityKeyHash: Bytes<32>;   // "C" — Section 5.12
+export ledger deadlineTimestamp: Uint<64>;       // Section 7.2 — 7 days, computed off-chain
+
+// C's attestation — a single flag carrying no financial data. Exported so the seller's
+// agent can watch it via the indexer and auto-trigger claimPayout (Section 5.14.1's
+// "push the burden onto the system" principle).
+export ledger loadingConfirmed: Boolean;
+
+// Neither is exported — only commitment hashes. Neither the amount nor the buyer/seller
+// address ever reaches the chain in plaintext (see privacy note above).
+ledger heldCommitment: Bytes<32>;
+ledger sellerAddressCommitment: Bytes<32>;
+
+witness sellerSecretKey(): Bytes<32>;
+witness portAuthoritySecretKey(): Bytes<32>;
+witness depositedCoin(): ShieldedCoinInfo;
+witness depositSalt(): Bytes<32>;
+witness heldCoinForRelease(): QualifiedShieldedCoinInfo;
+witness releaseSalt(): Bytes<32>;
+witness proposedSellerAddress(): Either<ZswapCoinPublicKey, ContractAddress>;
+witness sellerAddressSalt(): Bytes<32>;
+witness payoutSellerAddress(): Either<ZswapCoinPublicKey, ContractAddress>;
+witness payoutAddressSalt(): Bytes<32>;
+
+// Domain-separated hash-based authentication — see the security skill's Pattern 2. A
+// distinct domain separator per role (seller / C) keeps the hashes independent even if
+// the same secret key were ever reused across roles.
+pure circuit roleKeyHash(sk: Bytes<32>, domain: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([domain, sk]);
+}
+
+export circuit propose(portAuthKeyHash: Bytes<32>, deadlineAt: Uint<64>): [] {
+  assert(state == EscrowState.Empty, "escrow already proposed");
+  const sk = sellerSecretKey();
+  sellerKeyHash = disclose(roleKeyHash(sk, pad(32, "incoterms-escrow:seller:v1")));
+  portAuthorityKeyHash = disclose(portAuthKeyHash);
+  deadlineTimestamp = disclose(deadlineAt);
+
+  const sellerAddr = proposedSellerAddress();
+  const addrSalt = sellerAddressSalt();
+  sellerAddressCommitment = disclose(
+    persistentCommit<Either<ZswapCoinPublicKey, ContractAddress>>(sellerAddr, addrSalt)
+  );
+
+  state = EscrowState.Proposed;
+}
+
+export circuit lockEscrow(): [] {
+  assert(state == EscrowState.Proposed, "no active proposal");
+  const coin = depositedCoin();
+  const salt = depositSalt();
+  receiveShielded(disclose(coin));
+  const core = CoinCore { nonce: coin.nonce, color: coin.color, value: coin.value };
+  heldCommitment = disclose(persistentCommit<CoinCore>(core, salt));
+  state = EscrowState.Locked;
+}
+
+export circuit attestLoadingConfirmed(): [] {
+  assert(state == EscrowState.Locked, "escrow not locked");
+  assert(!loadingConfirmed, "loading already confirmed");
+  const sk = portAuthoritySecretKey();
+  assert(
+    roleKeyHash(sk, pad(32, "incoterms-escrow:port-auth:v1")) == portAuthorityKeyHash,
+    "caller is not the designated port authority (C) for this escrow"
+  );
+  loadingConfirmed = true;
+}
+
+export circuit claimPayout(): [] {
+  assert(state == EscrowState.Locked, "escrow not locked");
+  assert(loadingConfirmed, "loading not yet confirmed by port authority");
+  payOutToSeller();
+}
+
+export circuit releaseOnTimeout(): [] {
+  assert(state == EscrowState.Locked, "escrow not locked");
+  assert(blockTimeGte(deadlineTimestamp), "deadline not yet reached");
+  payOutToSeller();
+}
+
+circuit payOutToSeller(): [] {
+  const qcoin = heldCoinForRelease();
+  const coinSalt = releaseSalt();
+  const core = CoinCore { nonce: qcoin.nonce, color: qcoin.color, value: qcoin.value };
+  assert(persistentCommit<CoinCore>(core, coinSalt) == heldCommitment, "coin/commitment mismatch");
+
+  const sellerAddr = payoutSellerAddress();
+  const addrSalt = payoutAddressSalt();
+  assert(
+    persistentCommit<Either<ZswapCoinPublicKey, ContractAddress>>(sellerAddr, addrSalt)
+      == sellerAddressCommitment,
+    "seller address does not match the address committed to at propose time"
+  );
+
+  sendShielded(disclose(qcoin), disclose(sellerAddr), disclose(qcoin.value));
+  state = EscrowState.Released;
+}

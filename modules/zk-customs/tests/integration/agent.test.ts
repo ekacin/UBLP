@@ -12,9 +12,11 @@ import {
   generateMockZKProof,
   PrivateInputs,
   PublicInputs,
+} from '../../../../shared/src/crypto/documentCrypto';
+import {
   UBLPVerifiableCredential,
   UBLPVerifiablePresentation,
-} from '../../shared/src/crypto/mockCrypto';
+} from '../../types/src/vc';
 
 const ministryKeys = generateKeyPair();
 const agentKeys = generateKeyPair();
@@ -111,7 +113,7 @@ async function buildAgentServer() {
 
       return {
         presentation,
-        l2Result: { status: 'ONAYLANDI' as const, record: null },
+        l2Result: { status: 'APPROVED' as const, record: null },
       };
     }
   );
@@ -171,7 +173,7 @@ describe('Agent Service Integration', () => {
     expect(result.presentation.proof.publicValues.documentHash).toHaveLength(64);
     expect(result.presentation.proof.publicValues.holderPubKeyHash).toHaveLength(64);
     expect(result.presentation.proof.committeeAttestation).toBeDefined();
-    expect(result.l2Result.status).toBe('ONAYLANDI');
+    expect(result.l2Result.status).toBe('APPROVED');
   });
 
   it('POST /api/process removes rawDocument from VC in VP', async () => {

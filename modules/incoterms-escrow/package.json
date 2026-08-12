@@ -1,0 +1,20 @@
+{
+  "name": "@ublp/incoterms-escrow",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "compile:contract": "compact compile contracts/Escrow.compact contracts/managed/escrow"
+  },
+  "dependencies": {
+    "@ublp/shared": "*",
+    "@midnight-ntwrk/compact-runtime": "0.16.0",
+    "@midnight-ntwrk/compact-js": "2.5.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "typescript": "^5.4.5"
+  }
+}

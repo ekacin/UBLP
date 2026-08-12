@@ -1,4 +1,4 @@
-import { generateKeyPair } from '../../shared/src/crypto/mockCrypto';
+import { generateKeyPair } from '../../../../shared/src/crypto/documentCrypto';
 
 const ministryKeys = generateKeyPair();
 const agentKeys = generateKeyPair();

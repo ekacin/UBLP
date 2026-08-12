@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@ublp/shared": "*",
+    "@ublp/zk-customs-types": "*",
     "fastify": "^5.8.5"
   },
   "devDependencies": {

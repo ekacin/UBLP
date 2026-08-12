@@ -1,40 +1,21 @@
 /**
- * UBLP Kriptografi Modülü
+ * UBLP Cryptography Module — generic document hash/signature/ZK-proof primitives.
  *
- * Swap noktaları:
- *   sha256Hash          → Poseidon2 ile değiştirilebilir (ZK field-friendly hash)
- *                         DİKKAT: sp1-circuit/src/main.rs ile EŞ ZAMANLI değişmeli.
- *                         Sadece biri değişirse bakanlık imzası ZK devre içinde
- *                         doğrulanamaz hale gelir.
- *   generateZKProof     → SP1 prover network (SP1_PROVER_NETWORK_KEY + ELF gerekli)
+ * Note: this file is `modules/zk-customs/shared/src/crypto/mockCrypto.ts` moved to root.
+ * The VC types (UBLPVerifiableCredential etc.) aren't generic, so they didn't move here —
+ * they stayed under `@ublp/zk-customs-types` (see AGENTS.md Section 3.2/3.3).
+ *
+ * Swap points:
+ *   sha256Hash          → replaceable with Poseidon2 (ZK field-friendly hash).
+ *                         WARNING: must change IN LOCKSTEP with sp1-circuit/src/main.rs —
+ *                         if only one side changes, the signature becomes unverifiable
+ *                         inside the ZK circuit.
+ *   generateZKProof     → SP1 prover network (needs SP1_PROVER_NETWORK_KEY + ELF)
  *   generateKeyPair / signDocument / verifySignature → EdDSA/BabyJubJub
  */
 
 import crypto from 'crypto';
-import { generateSP1Proof, sp1Available, sp1VerifyProof } from './sp1Client';
-
-export { sp1VerifyProof } from './sp1Client';
-export {
-  blsGenerateKeyPair,
-  blsSign,
-  blsVerify,
-  blsAggregateSignatures,
-  blsAggregatePublicKeys,
-  blsGroupKeyHash,
-  blsVerifyThreshold,
-} from './blsCrypto';
-export type { BLSKeyPair } from './blsCrypto';
-export type {
-  UBLPVerifiableCredential,
-  UBLPVerifiablePresentation,
-  VCCredentialSubject,
-  VCProof,
-  VPProof,
-  VPProofPublicValues,
-  CommitteeAttestation,
-  L2SettleRecord,
-  L2SettleResponse,
-} from '../types/vc';
+import { generateSP1Proof, sp1Available } from './sp1Client';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -54,10 +35,10 @@ export interface PrivateInputs {
 }
 
 export interface PublicInputs {
-  /** SHA256("ublp-doc-v1:" + canonicalJson(document)) — domain-separated, ministry imzasıyla bağlı */
+  /** SHA256("ublp-doc-v1:" + canonicalJson(document)) — domain-separated, bound to the signature */
   documentHash: string;
   ministryPublicKey: string;
-  /** SHA256(documentId) — replay dedup anahtarı; SP1 proof'a bağlı */
+  /** SHA256(documentId) — replay-dedup key; bound into the SP1 proof */
   documentIdHash: string;
 }
 
@@ -69,13 +50,13 @@ export interface ZKProof {
   proof_system: string;
   public_inputs_hash: string;
   /**
-   * Mock modunda: bakanlık ECDSA imzası (base64 IEEE P1363)
-   * SP1 modunda: Groth16/PLONK proof bytes (base64)
+   * Mock mode: the signer's ECDSA signature (base64 IEEE P1363).
+   * SP1 mode: Groth16/PLONK proof bytes (base64).
    */
   ministrySignature: string;
   /**
-   * K-3: SHA256(holderPubKeyRaw) — SP1 modunda circuit 4. output; mock modunda lokal hesaplanır.
-   * Ham holder public key veya imzası asla L2'ye gitmez.
+   * K-3: SHA256(holderPubKeyRaw) — circuit output #4 in SP1 mode, computed locally in mock
+   * mode. The raw holder public key or signature never goes to L2.
    */
   holderPubKeyHash: string;
 }
@@ -98,8 +79,8 @@ export function canonicalJson(data: unknown): string {
 // ─── Hash ─────────────────────────────────────────────────────────────────────
 
 /**
- * SHA-256 hash fonksiyonu. İleride Poseidon2 ile değiştirilebilir.
- * UYARI: sp1-circuit/src/main.rs'deki Sha256::digest ile EŞ ZAMANLI değişmeli.
+ * SHA-256 hash function. May be swapped for Poseidon2 later.
+ * WARNING: must change IN LOCKSTEP with Sha256::digest in sp1-circuit/src/main.rs.
  */
 export function sha256Hash(data: string | Record<string, unknown>): string {
   const input = typeof data === 'string' ? data : canonicalJson(data);
@@ -107,20 +88,20 @@ export function sha256Hash(data: string | Record<string, unknown>): string {
 }
 
 // Domain separation prefix — cross-protocol hash collision prevention.
-// Circuit, agent ve ministry bu sabitten okur; değişirse tüm üçü güncellenmeli.
+// Read by the circuit, the agent, and the verifier; if it changes, all three must update.
 const DOCUMENT_HASH_DOMAIN = 'ublp-doc-v1:';
 
 /**
  * SHA256("ublp-doc-v1:" + canonicalJson(doc))
- * Belge hash'leri için domain-separated versiyon. Genel sha256Hash'ten ayrı tutulur
- * çünkü documentIdHash / pubKeyHash bu prefix'i kullanmaz.
+ * The domain-separated variant used for document hashes. Kept separate from the generic
+ * sha256Hash because documentIdHash / pubKeyHash don't use this prefix.
  */
 export function sha256HashDocument(doc: Record<string, unknown>): string {
   return crypto.createHash('sha256').update(DOCUMENT_HASH_DOMAIN + canonicalJson(doc)).digest('hex');
 }
 
 /**
- * AÇIK-1 fix: documentHash ve documentIdHash'i birbirine kriptografik olarak bağlar.
+ * ISSUE-1 fix: cryptographically binds documentHash and documentIdHash together.
  * SHA256(documentHash_bytes || documentIdHash_bytes) — 32+32=64 byte input.
  */
 export function combinedSignatureHash(documentHash: string, documentIdHash: string): string {
@@ -132,9 +113,9 @@ export function combinedSignatureHash(documentHash: string, documentIdHash: stri
 }
 
 /**
- * K-3 fix: Holder (Agent) VP imzası için payload hash.
+ * K-3 fix: payload hash for the holder's (Agent's) VP signature.
  * SHA256(documentHash_bytes || documentIdHash_bytes || holderDid_utf8)
- * Holder DID değiştirilirse imza kırılır → MitM koruması.
+ * If the holder DID changes, the signature breaks — MitM protection.
  */
 export function holderProofHash(
   documentHash: string,
@@ -163,8 +144,8 @@ export function generateKeyPair(): KeyPair {
 // ─── Signature ────────────────────────────────────────────────────────────────
 
 /**
- * Belgeyi imzalar.
- * AÇIK-1 fix: SHA256(documentHash || documentIdHash) birleşik hash'i imzalanır.
+ * Signs a document.
+ * ISSUE-1 fix: signs the combined hash SHA256(documentHash || documentIdHash).
  */
 export function signDocument(
   doc: Record<string, unknown>,
@@ -181,8 +162,8 @@ export function signDocument(
 }
 
 /**
- * Belge imzasını doğrular.
- * AÇIK-1 fix: combinedSignatureHash(documentHash, documentIdHash) üzerinde verify.
+ * Verifies a document's signature.
+ * ISSUE-1 fix: verifies against combinedSignatureHash(documentHash, documentIdHash).
  */
 export function verifySignature(
   doc: Record<string, unknown>,
@@ -206,7 +187,7 @@ export function verifySignature(
   }
 }
 
-/** L2 trustless doğrulama — belge içeriği bilinmeden hash üzerinde verify. */
+/** Trustless verification — verifies against the hash without knowing the document content. */
 export function verifySignatureOverHash(
   hashHex: string,
   signature: string,
@@ -227,7 +208,7 @@ export function verifySignatureOverHash(
 
 // ─── ZK Proof ─────────────────────────────────────────────────────────────────
 
-/** Mock ZK Proof — SP1 yokken kullanılır. */
+/** Mock ZK Proof — used when SP1 is unavailable. */
 export function generateMockZKProof(
   privateInputs: PrivateInputs,
   publicInputs: PublicInputs
@@ -239,7 +220,7 @@ export function generateMockZKProof(
     publicInputs.documentIdHash
   );
 
-  // K-3: holder auth — lokal doğrula, sadece hash VP'ye gider, ham key/sig asla
+  // K-3: holder auth — verified locally, only the hash goes into the VP, never the raw key/sig
   let holderPubKeyHash = '';
   if (privateInputs.holderSignature && privateInputs.holderPublicKey && privateInputs.holderDid) {
     const payloadHex = holderProofHash(
@@ -254,7 +235,7 @@ export function generateMockZKProof(
       { key: privateInputs.holderPublicKey, dsaEncoding: 'ieee-p1363' },
       Buffer.from(privateInputs.holderSignature, 'base64')
     );
-    if (!holderSigValid) throw new Error('Mock ZK: holder imzası geçersiz.');
+    if (!holderSigValid) throw new Error('Mock ZK: invalid holder signature.');
 
     const pubKeyDer = crypto.createPublicKey(privateInputs.holderPublicKey)
       .export({ type: 'spki', format: 'der' }) as Buffer;
@@ -275,29 +256,30 @@ export function generateMockZKProof(
 }
 
 /**
- * ZK Proof üretici — ana giriş noktası.
+ * ZK Proof generator — main entry point.
  *
  * SP1_PROVER_NETWORK_KEY + ELF → SP1 Groth16 proof
- * yoksa → mock ECDSA (geliştirme/test)
+ * otherwise → mock ECDSA (development/test)
  */
 export async function generateZKProof(
   privateInputs: PrivateInputs,
   publicInputs: PublicInputs
 ): Promise<ZKProof> {
   if (sp1Available()) {
-    console.log('[ZK] SP1 prover network kullanılıyor...');
+    console.log('[ZK] Using SP1 prover network...');
     if (!privateInputs.holderSignature || !privateInputs.holderPublicKey || !privateInputs.holderDid) {
-      throw new Error('SP1 modu: holder auth (holderSignature, holderPublicKey, holderDid) zorunlu.');
+      throw new Error('SP1 mode: holder auth (holderSignature, holderPublicKey, holderDid) is required.');
     }
 
-    // SP1 modunda ham JSON circuit'e gitmez — sadece önceden hesaplanmış documentHash.
-    // Trusted issuer model: Bakanlık hash'i doğru hesaplar; circuit 32 byte alır.
+    // In SP1 mode the raw JSON never reaches the circuit — only the pre-computed
+    // documentHash. Trusted-issuer model: the signer computes the hash correctly; the
+    // circuit only takes 32 bytes.
     const result = await generateSP1Proof({
       documentHash: publicInputs.documentHash,
       ministrySignature: privateInputs.signature,
       ministryPublicKey: publicInputs.ministryPublicKey,
       documentIdHash: publicInputs.documentIdHash,
-      // K-3: circuit private inputs — SP1 network'e gider, L2'ye asla dönmez
+      // K-3: circuit private inputs — go to the SP1 network, never come back to L2
       holderSignature: privateInputs.holderSignature,
       holderPublicKey: privateInputs.holderPublicKey,
       holderDid: privateInputs.holderDid,
@@ -305,13 +287,13 @@ export async function generateZKProof(
 
     if (result.publicValues.documentHash !== publicInputs.documentHash) {
       throw new Error(
-        `SP1 circuit documentHash uyuşmuyor. ` +
+        `SP1 circuit documentHash mismatch. ` +
         `circuit=${result.publicValues.documentHash} agent=${publicInputs.documentHash}`
       );
     }
     if (result.publicValues.documentIdHash !== publicInputs.documentIdHash) {
       throw new Error(
-        `SP1 circuit documentIdHash uyuşmuyor. ` +
+        `SP1 circuit documentIdHash mismatch. ` +
         `circuit=${result.publicValues.documentIdHash} agent=${publicInputs.documentIdHash}`
       );
     }
@@ -333,6 +315,6 @@ export async function generateZKProof(
     };
   }
 
-  console.log('[ZK] SP1 yok — mock proof (geliştirme modu).');
+  console.log('[ZK] SP1 unavailable — using mock proof (development mode).');
   return generateMockZKProof(privateInputs, publicInputs);
 }

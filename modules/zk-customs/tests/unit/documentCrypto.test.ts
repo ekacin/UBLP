@@ -11,7 +11,7 @@ import {
   verifySignature,
   verifySignatureOverHash,
   generateMockZKProof,
-} from '../../shared/src/crypto/mockCrypto';
+} from '../../../../shared/src/crypto/documentCrypto';
 import {
   SAMPLE_CUSTOMS_DOCUMENT,
   SAMPLE_DOCUMENT_ID,

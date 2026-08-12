@@ -7,8 +7,8 @@ import {
   sha256HashDocument,
   sha256Hash,
   verifySignature,
-  UBLPVerifiableCredential,
-} from '../../shared/src/crypto/mockCrypto';
+} from '../../../../shared/src/crypto/documentCrypto';
+import { UBLPVerifiableCredential } from '../../types/src/vc';
 
 const testKeys = generateKeyPair();
 let app: ReturnType<typeof Fastify>;

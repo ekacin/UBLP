@@ -9,11 +9,13 @@ import {
   sp1VerifyProof,
   blsVerifyThreshold,
   blsGroupKeyHash,
+} from '@ublp/shared';
+import {
   UBLPVerifiablePresentation,
   CommitteeAttestation,
   L2SettleRecord,
   L2SettleResponse,
-} from '@ublp/shared';
+} from '@ublp/zk-customs-types';
 
 const app = Fastify({ logger: false });
 const DB_PATH = path.join(__dirname, '..', 'data', 'settled.json');
@@ -339,15 +341,15 @@ app.post<{ Body: VerifyRequest }>(
         documentIdHash,
         ministryPublicKeyHash: sha256Hash(ministryPublicKey),
         holderDid,
-        status: 'ONAYLANDI',
+        status: 'APPROVED',
         settledAt: new Date().toISOString(),
         proofSystem,
       };
 
       db.push(record);
       await saveDB(db);
-      console.log('[L2 Verifier] ✓ VP "ONAYLANDI". Toplam:', db.length);
-      const response: L2SettleResponse = { status: 'ONAYLANDI', record };
+      console.log('[L2 Verifier] ✓ VP "APPROVED". Toplam:', db.length);
+      const response: L2SettleResponse = { status: 'APPROVED', record };
       return reply.status(200).send(response);
     });
   }
@@ -401,7 +403,7 @@ app.post<{ Body: { ministryPublicKey: string; compromisedAt?: string } }>(
       for (const record of db) {
         if (
           record.ministryPublicKeyHash === keyHash &&
-          record.status === 'ONAYLANDI' &&
+          record.status === 'APPROVED' &&
           record.settledAt >= revokedAt
         ) {
           record.status = 'SUSPICIOUS';

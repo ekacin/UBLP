@@ -1,10 +1,10 @@
 /**
  * SP1 Prover Network Client (Succinct)
  *
- * Ortam değişkenleri:
- *   SP1_PROVER_NETWORK_KEY  — Succinct API anahtarı (zorunlu)
- *   SP1_PROVER_URL          — varsayılan: https://rpc.succinct.xyz
- *   SP1_ELF_PATH            — derlenen ELF (varsayılan: sp1-circuit/elf/ublp-verifier)
+ * Environment variables:
+ *   SP1_PROVER_NETWORK_KEY  — Succinct API key (required)
+ *   SP1_PROVER_URL          — default: https://rpc.succinct.xyz
+ *   SP1_ELF_PATH            — compiled ELF (default: sp1-circuit/elf/ublp-verifier)
  */
 
 import fs from 'fs';
@@ -22,9 +22,9 @@ const ELF_PATH =
 export function sp1Available(): boolean {
   if (SP1_KEY.length > 0 && !fs.existsSync(ELF_PATH)) {
     console.error(
-      `[SP1] HATA: SP1_PROVER_NETWORK_KEY set ama ELF bulunamadı: ${ELF_PATH}\n` +
-      `[SP1] sp1-circuit/ içinde "cargo prove build" çalıştır, ELF'i kopyala.\n` +
-      `[SP1] Güvenlik garantisi olmadan mock moda düşülmeyecek — sistem duruyor.`
+      `[SP1] ERROR: SP1_PROVER_NETWORK_KEY is set but the ELF was not found: ${ELF_PATH}\n` +
+      `[SP1] Run "cargo prove build" inside sp1-circuit/ and copy the ELF.\n` +
+      `[SP1] Will not silently fall back to mock mode without this security guarantee — halting.`
     );
     process.exit(1);
   }
@@ -37,9 +37,9 @@ let _cachedVkHash: string | null = null;
 
 async function getVkHash(): Promise<string> {
   if (_cachedVkHash) return _cachedVkHash;
-  // Gerçek SP1 vk_hash: `cargo prove build` çıktısından üretilir.
-  // Eğer sp1-circuit/elf/ublp-verifier.vk_hash dosyası varsa onu kullan.
-  // Yoksa SHA256(elf) fallback — MVP'de yeterli, üretimde cargo prove vk çıktısıyla değiştir.
+  // The real SP1 vk_hash is produced by `cargo prove build`'s output. If
+  // sp1-circuit/elf/ublp-verifier.vk_hash exists, use it. Otherwise fall back to
+  // SHA256(elf) — good enough for the MVP, replace with cargo prove's vk output in production.
   const vkHashFile = ELF_PATH + '.vk_hash';
   if (fs.existsSync(vkHashFile)) {
     _cachedVkHash = (await fs.promises.readFile(vkHashFile, 'utf-8')).trim();
@@ -52,7 +52,7 @@ async function getVkHash(): Promise<string> {
 
 // ─── Key Conversion ───────────────────────────────────────────────────────────
 
-/** PEM SPKI → 65-byte uncompressed SEC1 (0x04 || x || y). SP1 circuit bunu bekler. */
+/** PEM SPKI → 65-byte uncompressed SEC1 (0x04 || x || y). What the SP1 circuit expects. */
 export function pubKeyPemToRaw(pem: string): Buffer {
   const keyObject = crypto.createPublicKey(pem);
   const der = keyObject.export({ type: 'spki', format: 'der' }) as Buffer;
@@ -89,27 +89,27 @@ interface ProofStatus {
 export interface SP1ProofResult {
   proofBytes: string;
   publicValues: {
-    documentHash: string;       // hex — SHA256(canonicalJson), circuit içinde hesaplandı
+    documentHash: string;       // hex — SHA256(canonicalJson), computed inside the circuit
     pubKeyHash: string;         // hex — SHA256(ministryPubKeyRaw)
-    documentIdHash: string;     // hex — SHA256(documentId), proof'a bağlı
-    holderPubKeyHash: string;   // hex — K-3: SHA256(holderPubKeyRaw), circuit 4. output
+    documentIdHash: string;     // hex — SHA256(documentId), bound into the proof
+    holderPubKeyHash: string;   // hex — K-3: SHA256(holderPubKeyRaw), circuit output #4
   };
   proofSystem: 'sp1-groth16' | 'sp1-plonk';
 }
 
 export async function generateSP1Proof(params: {
-  documentHash: string;           // hex, 32 byte — SHA256(canonicalJson), trusted issuer önceden hesaplar
-  ministrySignature: string;      // base64 IEEE P1363, 64 byte
+  documentHash: string;           // hex, 32 bytes — SHA256(canonicalJson), pre-computed by the trusted issuer
+  ministrySignature: string;      // base64 IEEE P1363, 64 bytes
   ministryPublicKey: string;      // PEM SPKI
-  documentIdHash: string;         // hex, 32 byte — AÇIK-1: proof'a bağlanır
-  // K-3: holder auth — circuit private input, L2'ye gönderilmez
-  holderSignature: string;        // base64 IEEE P1363, 64 byte
-  holderPublicKey: string;        // PEM SPKI — circuit raw bytes'a çevirir
-  holderDid: string;              // UTF-8 — holder payload hesabında kullanılır
+  documentIdHash: string;         // hex, 32 bytes — ISSUE-1: bound into the proof
+  // K-3: holder auth — circuit private input, never sent to L2
+  holderSignature: string;        // base64 IEEE P1363, 64 bytes
+  holderPublicKey: string;        // PEM SPKI — the circuit converts this to raw bytes
+  holderDid: string;              // UTF-8 — used in the holder payload computation
   mode?: ProofMode;
 }): Promise<SP1ProofResult> {
-  if (!SP1_KEY) throw new Error('SP1_PROVER_NETWORK_KEY ayarlı değil.');
-  if (!fs.existsSync(ELF_PATH)) throw new Error(`ELF bulunamadı: ${ELF_PATH}`);
+  if (!SP1_KEY) throw new Error('SP1_PROVER_NETWORK_KEY is not set.');
+  if (!fs.existsSync(ELF_PATH)) throw new Error(`ELF not found: ${ELF_PATH}`);
 
   const {
     documentHash, ministrySignature, ministryPublicKey, documentIdHash,
@@ -117,14 +117,14 @@ export async function generateSP1Proof(params: {
     mode = 'groth16',
   } = params;
 
-  // stdin sırası main.rs'deki read_vec() sırasıyla birebir eşleşmeli:
+  // stdin order must match main.rs's read_vec() order exactly:
   //   1. ministry_signature
   //   2. ministry_pub_key_raw
-  //   3. document_hash        (32 byte — önceden hesaplanmış, ham JSON gönderilmiyor)
+  //   3. document_hash        (32 bytes — pre-computed, raw JSON is never sent)
   //   4. document_id_hash
-  //   5. holder_signature     (K-3 — private, L2'ye gitmiyor)
-  //   6. holder_pub_key_raw   (K-3 — private, yalnızca hash commit edilir)
-  //   7. holder_did           (K-3 — private, payload'a gömülür)
+  //   5. holder_signature     (K-3 — private, never reaches L2)
+  //   6. holder_pub_key_raw   (K-3 — private, only its hash is committed)
+  //   7. holder_did           (K-3 — private, embedded in the payload)
   const sigBytes = Buffer.from(ministrySignature, 'base64');
   const pubKeyRaw = pubKeyPemToRaw(ministryPublicKey);
   const docHashBytes = Buffer.from(documentHash, 'hex');
@@ -133,12 +133,12 @@ export async function generateSP1Proof(params: {
   const holderPubKeyRaw = pubKeyPemToRaw(holderPublicKey);
   const holderDidBytes = Buffer.from(holderDid, 'utf8');
 
-  if (sigBytes.length !== 64) throw new Error('Ministry imzası 64 byte olmalı (IEEE P1363).');
-  if (pubKeyRaw.length !== 65) throw new Error('Ministry public key 65 byte olmalı (uncompressed SEC1).');
-  if (docHashBytes.length !== 32) throw new Error('documentHash 32 byte olmalı (hex, 64 char).');
-  if (idHashBytes.length !== 32) throw new Error('documentIdHash 32 byte olmalı.');
-  if (holderSigBytes.length !== 64) throw new Error('Holder imzası 64 byte olmalı (IEEE P1363).');
-  if (holderPubKeyRaw.length !== 65) throw new Error('Holder public key 65 byte olmalı (uncompressed SEC1).');
+  if (sigBytes.length !== 64) throw new Error('Ministry signature must be 64 bytes (IEEE P1363).');
+  if (pubKeyRaw.length !== 65) throw new Error('Ministry public key must be 65 bytes (uncompressed SEC1).');
+  if (docHashBytes.length !== 32) throw new Error('documentHash must be 32 bytes (hex, 64 chars).');
+  if (idHashBytes.length !== 32) throw new Error('documentIdHash must be 32 bytes.');
+  if (holderSigBytes.length !== 64) throw new Error('Holder signature must be 64 bytes (IEEE P1363).');
+  if (holderPubKeyRaw.length !== 65) throw new Error('Holder public key must be 65 bytes (uncompressed SEC1).');
 
   const stdin: string[] = [
     sigBytes.toString('base64'),
@@ -173,14 +173,14 @@ export async function generateSP1Proof(params: {
   }
 
   const { proof_id } = (await submitRes.json()) as { proof_id: string };
-  console.log(`[SP1 Client] Proof isteği gönderildi. proof_id: ${proof_id}`);
+  console.log(`[SP1 Client] Proof request submitted. proof_id: ${proof_id}`);
 
   const result = await pollProof(proof_id);
 
-  if (!result.fulfillment) throw new Error(`SP1 fulfillment yok. status: ${result.status}`);
+  if (!result.fulfillment) throw new Error(`No SP1 fulfillment. status: ${result.status}`);
 
   const pv = result.fulfillment.public_values;
-  if (pv.length < 4) throw new Error('SP1 public values eksik (beklenen: 4 — [docHash, pkHash, idHash, holderPkHash]).');
+  if (pv.length < 4) throw new Error('SP1 public values missing (expected 4 — [docHash, pkHash, idHash, holderPkHash]).');
 
   return {
     proofBytes: result.fulfillment.proof_bytes,
@@ -207,12 +207,12 @@ async function pollProof(
     });
     if (!res.ok) throw new Error(`SP1 poll failed (${res.status}): ${await res.text()}`);
     const status = (await res.json()) as ProofStatus;
-    console.log(`[SP1 Client] Proof durumu: ${status.status}`);
+    console.log(`[SP1 Client] Proof status: ${status.status}`);
     if (status.status === 'PROOF_FULFILLED') return status;
     if (status.status === 'PROOF_UNCLAIMED')
-      throw new Error('SP1 proof UNCLAIMED — prover müsait değil.');
+      throw new Error('SP1 proof UNCLAIMED — no prover available.');
   }
-  throw new Error(`SP1 proof zaman aşımı (${maxWaitMs / 1000}s). proof_id: ${proofId}`);
+  throw new Error(`SP1 proof timed out (${maxWaitMs / 1000}s). proof_id: ${proofId}`);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -226,7 +226,7 @@ export interface SP1VerifyParams {
   documentHash: string;
   documentIdHash: string;
   ministryPublicKey: string;
-  holderPubKeyHash: string;   // K-3: circuit 4. output — expectedPublicValues'a girer
+  holderPubKeyHash: string;   // K-3: circuit output #4 — feeds into expectedPublicValues
 }
 
 export async function sp1VerifyProof(params: SP1VerifyParams): Promise<boolean> {
@@ -237,7 +237,7 @@ export async function sp1VerifyProof(params: SP1VerifyParams): Promise<boolean> 
   const pubKeyRaw = pubKeyPemToRaw(ministryPublicKey);
   const pubKeyHash = crypto.createHash('sha256').update(pubKeyRaw).digest();
 
-  // Circuit commit sırası: [documentHash, pubKeyHash, documentIdHash, holderPubKeyHash]
+  // Circuit commit order: [documentHash, pubKeyHash, documentIdHash, holderPubKeyHash]
   const expectedPublicValues = [
     Buffer.from(documentHash, 'hex').toString('base64'),
     pubKeyHash.toString('base64'),

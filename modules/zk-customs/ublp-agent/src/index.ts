@@ -1,6 +1,4 @@
-import Fastify from 'fastify';
 import crypto from 'crypto';
-import fs from 'fs';
 import path from 'path';
 import {
   verifySignature,
@@ -13,37 +11,22 @@ import {
   PublicInputs,
   KeyPair,
   ZKProof,
+  loadOrGenerateAgentKeys,
+  createAgentServer,
+  startAgentServer,
+} from '@ublp/shared';
+import {
   UBLPVerifiableCredential,
   UBLPVerifiablePresentation,
   CommitteeAttestation,
   L2SettleResponse,
-} from '@ublp/shared';
+} from '@ublp/zk-customs-types';
 
-const app = Fastify({ logger: false });
+const app = createAgentServer();
 const L2_VERIFIER_URL = process.env.L2_VERIFIER_URL ?? 'http://localhost:3003';
 const COMMITTEE_URL = process.env.COMMITTEE_URL ?? 'http://localhost:3004';
 const AGENT_DID = process.env.AGENT_DID ?? 'did:ublp:agent:default';
 const AGENT_KEYS_PATH = path.join(__dirname, '..', 'data', 'agent-keypair.json');
-
-// ─── Agent Key Management ─────────────────────────────────────────────────────
-
-async function loadOrGenerateAgentKeys(): Promise<KeyPair> {
-  if (fs.existsSync(AGENT_KEYS_PATH)) {
-    const raw = await fs.promises.readFile(AGENT_KEYS_PATH, 'utf-8');
-    console.log('[UBLP Agent] Mevcut P-256 anahtarı yüklendi.');
-    return JSON.parse(raw) as KeyPair;
-  }
-  console.log('[UBLP Agent] Yeni EC P-256 anahtar çifti üretiliyor...');
-  const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', {
-    namedCurve: 'P-256',
-    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
-    publicKeyEncoding: { type: 'spki', format: 'pem' },
-  });
-  const keys: KeyPair = { privateKey, publicKey };
-  await fs.promises.mkdir(path.dirname(AGENT_KEYS_PATH), { recursive: true });
-  await fs.promises.writeFile(AGENT_KEYS_PATH, JSON.stringify(keys, null, 2), 'utf-8');
-  return keys;
-}
 
 /**
  * K-3: Agent VP'yi kendi P-256 anahtarıyla imzalar.
@@ -318,9 +301,9 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 const start = async (): Promise<void> => {
-  const agentKeys = await loadOrGenerateAgentKeys();
+  const agentKeys = await loadOrGenerateAgentKeys(AGENT_KEYS_PATH, 'UBLP Agent');
   await buildServer(agentKeys);
-  await app.listen({ port: 3002, host: '0.0.0.0' });
+  await startAgentServer(app, { port: 3002, host: '0.0.0.0' });
   console.log('[UBLP Agent] ✓ UBLP Agent — http://localhost:3002');
   console.log('[UBLP Agent] DID:', AGENT_DID);
   console.log('[UBLP Agent] Mod: ZK proof → Committee verify → BLS → L2');

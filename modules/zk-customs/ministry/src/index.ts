@@ -10,8 +10,8 @@ import {
   sha256HashDocument,
   canonicalJson,
   KeyPair,
-  UBLPVerifiableCredential,
 } from '@ublp/shared';
+import { UBLPVerifiableCredential } from '@ublp/zk-customs-types';
 
 const pbkdf2 = promisify(crypto.pbkdf2);
 

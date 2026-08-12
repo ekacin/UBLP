@@ -1,14 +1,11 @@
 {
-  "name": "@ublp/shared",
+  "name": "@ublp/zk-customs-types",
   "version": "0.1.0",
-  "main": "dist/crypto/mockCrypto.js",
-  "types": "dist/crypto/mockCrypto.d.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch"
-  },
-  "dependencies": {
-    "@noble/bls12-381": "^1.4.0"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",

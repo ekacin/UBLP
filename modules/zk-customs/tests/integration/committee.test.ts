@@ -8,12 +8,14 @@ import {
   sha256Hash,
   verifySignatureOverHash,
   combinedSignatureHash,
+} from '../../../../shared/src/crypto/documentCrypto';
+import {
   blsGenerateKeyPair,
   blsSign,
   blsAggregateSignatures,
   blsGroupKeyHash,
-  CommitteeAttestation,
-} from '../../shared/src/crypto/mockCrypto';
+} from '../../../../shared/src/crypto/blsCrypto';
+import { CommitteeAttestation } from '../../types/src/vc';
 
 const ministryKeys = generateKeyPair();
 const MINISTRY_DID = 'did:ublp:ministry:test';
@@ -246,7 +248,7 @@ describe('Committee Service Integration', () => {
     const memberMap = new Map(committeeMembers.map((m) => [m.memberId, m.publicKey]));
     const signerPubs = att.signerIds.map((id) => memberMap.get(id)!);
 
-    const { blsVerifyThreshold } = await import('../../shared/src/crypto/blsCrypto');
+    const { blsVerifyThreshold } = await import('../../../../shared/src/crypto/blsCrypto');
     const result = await blsVerifyThreshold(att.aggregatedSignature, msgHex, signerPubs, att.threshold);
     expect(result.valid).toBe(true);
   });

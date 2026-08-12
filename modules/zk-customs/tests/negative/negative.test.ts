@@ -12,7 +12,7 @@ import {
   canonicalJson,
   generateMockZKProof,
   generateZKProof,
-} from '../../shared/src/crypto/mockCrypto';
+} from '../../../../shared/src/crypto/documentCrypto';
 
 import {
   blsGenerateKeyPair,
@@ -22,7 +22,7 @@ import {
   blsAggregatePublicKeys,
   blsGroupKeyHash,
   blsVerifyThreshold,
-} from '../../shared/src/crypto/blsCrypto';
+} from '../../../../shared/src/crypto/blsCrypto';
 
 const ministryKeys = generateKeyPair();
 const agentKeys = generateKeyPair();
@@ -176,7 +176,7 @@ describe('Negative: BLS Attacks', () => {
     const aggSig = blsAggregateSignatures([sigs[0]]);
     const result = await blsVerifyThreshold(aggSig, msg, [members[0].publicKey], 2);
     expect(result.valid).toBe(false);
-    expect(result.reason).toContain('Eşik');
+    expect(result.reason).toContain('Threshold');
   });
 
   it('BLS threshold rejects wrong signer subset (attacker pubkeys)', async () => {
