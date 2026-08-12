@@ -28,7 +28,6 @@ npm run dev
 | | |
 |---|---|
 | **Efe Kaan Açin** | Architect, developer |
-| **Claude (Anthropic)** | ZK circuit design, cryptography advisory, security audit |
 ---
 ## License
 Apache 2.0 — see [LICENSE](./LICENSE)
