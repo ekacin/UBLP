@@ -23,6 +23,7 @@ const PORT_AUTH_SK = new Uint8Array(32).fill(2);
 const SELLER_PUBKEY = new Uint8Array(32).fill(3);
 const SALT_A = new Uint8Array(32).fill(4);
 const SALT_B = new Uint8Array(32).fill(5);
+const AMOUNT_SALT = new Uint8Array(32).fill(10);
 
 const buyerMemoKeys = generateX25519KeyPair();
 const sellerMemoKeys = generateX25519KeyPair();
@@ -43,6 +44,8 @@ const filledState: EscrowPrivateState = {
   // "seller" role instance: own key = seller's, counterparty = buyer's public key
   ownMemoPrivateKey: hexToBytes(sellerMemoKeys.privateKey),
   counterpartyMemoPublicKey: hexToBytes(buyerMemoKeys.publicKey),
+  agreedAmount: 1_000_000n,
+  agreedAmountSalt: AMOUNT_SALT,
 };
 
 describe('zswapRecipient / contractRecipient', () => {
@@ -126,6 +129,20 @@ describe('escrowWitnesses — populated privateState', () => {
     expect(recovered.coin).toEqual(filledState.depositedCoin);
     expect(recovered.depositSalt).toEqual(SALT_B);
   });
+
+  it('agreedAmount and lockedAmount return the SAME amount (must verify the same commitment)', () => {
+    const [, proposed] = escrowWitnesses.agreedAmount(contextWith(filledState));
+    const [, locked] = escrowWitnesses.lockedAmount(contextWith(filledState));
+    expect(proposed).toBe(1_000_000n);
+    expect(locked).toBe(1_000_000n);
+  });
+
+  it('agreedAmountSalt and lockedAmountSalt return the SAME salt', () => {
+    const [, s1] = escrowWitnesses.agreedAmountSalt(contextWith(filledState));
+    const [, s2] = escrowWitnesses.lockedAmountSalt(contextWith(filledState));
+    expect(s1).toBe(AMOUNT_SALT);
+    expect(s2).toBe(AMOUNT_SALT);
+  });
 });
 
 describe('escrowWitnesses — empty privateState (emptyEscrowPrivateState)', () => {
@@ -142,6 +159,10 @@ describe('escrowWitnesses — empty privateState (emptyEscrowPrivateState)', () 
     'payoutAddressSalt',
     'sellerEncryptedMemo',
     'buyerEncryptedMemo',
+    'agreedAmount',
+    'agreedAmountSalt',
+    'lockedAmount',
+    'lockedAmountSalt',
   ];
 
   for (const name of cases) {

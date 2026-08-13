@@ -27,6 +27,13 @@ export interface EscrowTerms {
   /** Amount to lock, as an integer string in the smallest unit (e.g. "1000000") — a string
    * rather than a bigint because canonicalJson/JSON.stringify can't serialize bigint. */
   amount: string;
+  /**
+   * Hex salt for `agreedAmountCommitment` (the contract-level fix for "nothing checks that
+   * the locked coin matches the agreed price"). Sealed into `terms` like `amount` itself —
+   * seller generates it once at propose time, buyer already has it via the same signed
+   * terms it verified before accepting.
+   */
+  amountSalt: string;
   /** Section 7.2 — if point (c) isn't confirmed / a dispute drags on past this time, the
    * auto-release timeout fires (7 days, unix seconds). */
   deadlineTimestamp: number;

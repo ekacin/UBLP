@@ -74,6 +74,15 @@ export interface EscrowPrivateState {
    */
   ownMemoPrivateKey: Uint8Array | null;
   counterpartyMemoPublicKey: Uint8Array | null;
+
+  /**
+   * The price agreed to off-chain (EscrowTerms.amount/amountSalt) — committed at propose
+   * time, re-proven at lockEscrow time so the locked coin's value can't silently differ
+   * from what was agreed. Same value, both roles: seller supplies it when proposing,
+   * buyer supplies it (from the terms it already received) when locking.
+   */
+  agreedAmount: bigint | null;
+  agreedAmountSalt: Uint8Array | null;
 }
 
 export const emptyEscrowPrivateState: EscrowPrivateState = {
@@ -86,6 +95,8 @@ export const emptyEscrowPrivateState: EscrowPrivateState = {
   qualifiedCoin: null,
   ownMemoPrivateKey: null,
   counterpartyMemoPublicKey: null,
+  agreedAmount: null,
+  agreedAmountSalt: null,
 };
 
 function required<T>(value: T | null, fieldName: string): T {
@@ -193,5 +204,37 @@ export const escrowWitnesses: Witnesses<EscrowPrivateState> = {
       'counterpartyMemoPublicKey'
     );
     return [context.privateState, encryptBuyerMemo(coin, salt, ownKey, counterpartyKey)];
+  },
+
+  agreedAmount(
+    context: WitnessContext<Ledger, EscrowPrivateState>
+  ): [EscrowPrivateState, bigint] {
+    return [context.privateState, required(context.privateState.agreedAmount, 'agreedAmount')];
+  },
+
+  agreedAmountSalt(
+    context: WitnessContext<Ledger, EscrowPrivateState>
+  ): [EscrowPrivateState, Uint8Array] {
+    return [
+      context.privateState,
+      required(context.privateState.agreedAmountSalt, 'agreedAmountSalt'),
+    ];
+  },
+
+  lockedAmount(
+    context: WitnessContext<Ledger, EscrowPrivateState>
+  ): [EscrowPrivateState, bigint] {
+    // Section 5.18-style reuse: same agreed amount, re-supplied under a different witness
+    // name because it's called from a different circuit (lockEscrow, not propose).
+    return [context.privateState, required(context.privateState.agreedAmount, 'agreedAmount')];
+  },
+
+  lockedAmountSalt(
+    context: WitnessContext<Ledger, EscrowPrivateState>
+  ): [EscrowPrivateState, Uint8Array] {
+    return [
+      context.privateState,
+      required(context.privateState.agreedAmountSalt, 'agreedAmountSalt'),
+    ];
   },
 };

@@ -44,6 +44,7 @@ describe('dual-recipient memo — end to end (terms -> propose/lockEscrow witnes
       portAuthorityDid: PORT_AUTHORITY,
       incoterm: 'FOB',
       amount: '1000000',
+      amountSalt: Buffer.from(new Uint8Array(32).fill(3)).toString('hex'),
       deadlineTimestamp: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
       sellerMemoPublicKey: sellerMemo.publicKey,
       buyerMemoPublicKey: buyerMemo.publicKey,
@@ -67,9 +68,13 @@ describe('dual-recipient memo — end to end (terms -> propose/lockEscrow witnes
       depositedCoin: null,
       depositSalt: null,
       qualifiedCoin: null,
+      agreedAmount: BigInt(accepted.proposal.terms.amount),
+      agreedAmountSalt: hexToBytes(accepted.proposal.terms.amountSalt),
       ...sellerMemoKeys(accepted.proposal.terms, hexToBytes(sellerMemo.privateKey)),
     };
     const [, sellerMemoCiphertext] = escrowWitnesses.sellerEncryptedMemo(contextWith(sellerState));
+    const [, proposeAmount] = escrowWitnesses.agreedAmount(contextWith(sellerState));
+    const [, proposeAmountSalt] = escrowWitnesses.agreedAmountSalt(contextWith(sellerState));
 
     // Step 3: buyer's own agent builds ITS EscrowPrivateState and calls `lockEscrow` —
     // buyerEncryptedMemo witness fires, encrypting coin+salt for the seller.
@@ -83,9 +88,21 @@ describe('dual-recipient memo — end to end (terms -> propose/lockEscrow witnes
       depositedCoin,
       depositSalt,
       qualifiedCoin: null,
+      agreedAmount: BigInt(accepted.proposal.terms.amount),
+      agreedAmountSalt: hexToBytes(accepted.proposal.terms.amountSalt),
       ...buyerMemoKeys(accepted.proposal.terms, hexToBytes(buyerMemo.privateKey)),
     };
     const [, buyerMemoCiphertext] = escrowWitnesses.buyerEncryptedMemo(contextWith(buyerState));
+
+    // The amount-equality fix (AGENTS.md): buyer independently re-derives the SAME agreed
+    // amount+salt seller committed to at propose time, from the same terms — and the coin
+    // buyer actually locks must equal it. No separate exchange, same principle as the memo
+    // keys above.
+    const [, lockAmount] = escrowWitnesses.lockedAmount(contextWith(buyerState));
+    const [, lockAmountSalt] = escrowWitnesses.lockedAmountSalt(contextWith(buyerState));
+    expect(lockAmount).toBe(proposeAmount);
+    expect(lockAmountSalt).toEqual(proposeAmountSalt);
+    expect(depositedCoin.value).toBe(lockAmount);
 
     // Step 4: these ciphertexts are what actually lands in the sellerMemo/buyerMemo ledger
     // fields on-chain. Anyone reading them off-chain later only needs their own private key
