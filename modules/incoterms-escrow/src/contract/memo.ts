@@ -9,8 +9,12 @@ import type { EitherAddress, ShieldedCoin } from './witnesses';
 
 // coin.nonce(32) + coin.color(32) + coin.value(16) + depositSalt(32)
 export const BUYER_MEMO_PLAINTEXT_LENGTH = 112;
-// address.is_left(1) + address.left(32) + address.right(32) + addressSalt(32)
-export const SELLER_MEMO_PLAINTEXT_LENGTH = 97;
+// address.is_left(1) + address.left(32) + address.right(32) + addressSalt(32) — shared shape
+// for BOTH sellerMemo (propose) and buyerAddressMemo (lockEscrow, Section 5.19). Kept as two
+// separate on-chain fields rather than merged with buyerMemo's coin data — different concern
+// (custody proof vs. payout destination), simpler to reason about and test independently.
+export const ADDRESS_MEMO_PLAINTEXT_LENGTH = 97;
+export const SELLER_MEMO_PLAINTEXT_LENGTH = ADDRESS_MEMO_PLAINTEXT_LENGTH;
 
 function uint128ToBytes(value: bigint): Buffer {
   const buf = Buffer.alloc(16);
@@ -52,7 +56,7 @@ export function decodeBuyerMemoPlaintext(
   };
 }
 
-export function encodeSellerMemoPlaintext(address: EitherAddress, addressSalt: Uint8Array): Buffer {
+export function encodeAddressMemoPlaintext(address: EitherAddress, addressSalt: Uint8Array): Buffer {
   return Buffer.concat([
     Buffer.from([address.is_left ? 1 : 0]),
     Buffer.from(address.left.bytes),
@@ -61,12 +65,12 @@ export function encodeSellerMemoPlaintext(address: EitherAddress, addressSalt: U
   ]);
 }
 
-export function decodeSellerMemoPlaintext(
+export function decodeAddressMemoPlaintext(
   plaintext: Buffer
 ): { address: EitherAddress; addressSalt: Uint8Array } {
-  if (plaintext.length !== SELLER_MEMO_PLAINTEXT_LENGTH) {
+  if (plaintext.length !== ADDRESS_MEMO_PLAINTEXT_LENGTH) {
     throw new Error(
-      `Seller memo plaintext must be ${SELLER_MEMO_PLAINTEXT_LENGTH} bytes, got ${plaintext.length}.`
+      `Address memo plaintext must be ${ADDRESS_MEMO_PLAINTEXT_LENGTH} bytes, got ${plaintext.length}.`
     );
   }
   return {
@@ -78,6 +82,9 @@ export function decodeSellerMemoPlaintext(
     addressSalt: new Uint8Array(plaintext.subarray(65, 97)),
   };
 }
+
+export const encodeSellerMemoPlaintext = encodeAddressMemoPlaintext;
+export const decodeSellerMemoPlaintext = decodeAddressMemoPlaintext;
 
 function toHex(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString('hex');
@@ -94,16 +101,19 @@ export function encryptBuyerMemo(
   return new Uint8Array(Buffer.from(memoHex, 'hex'));
 }
 
-export function encryptSellerMemo(
+export function encryptAddressMemo(
   address: EitherAddress,
   addressSalt: Uint8Array,
   ownPrivateKey: Uint8Array,
   counterpartyPublicKey: Uint8Array
 ): Uint8Array {
-  const plaintext = encodeSellerMemoPlaintext(address, addressSalt);
+  const plaintext = encodeAddressMemoPlaintext(address, addressSalt);
   const memoHex = encryptDualRecipientMemo(plaintext, toHex(ownPrivateKey), toHex(counterpartyPublicKey));
   return new Uint8Array(Buffer.from(memoHex, 'hex'));
 }
+
+export const encryptSellerMemo = encryptAddressMemo;
+export const encryptBuyerAddressMemo = encryptAddressMemo;
 
 /** Recovery path (AGENTS.md 5.18): either the buyer or the seller can call this — both
  * derive the same ECDH shared secret regardless of which side encrypted the memo. */
@@ -116,11 +126,14 @@ export function recoverBuyerMemo(
   return decodeBuyerMemoPlaintext(plaintext);
 }
 
-export function recoverSellerMemo(
+export function recoverAddressMemo(
   memoBytes: Uint8Array,
   ownPrivateKey: Uint8Array,
   counterpartyPublicKey: Uint8Array
 ): { address: EitherAddress; addressSalt: Uint8Array } {
   const plaintext = decryptDualRecipientMemo(toHex(memoBytes), toHex(ownPrivateKey), toHex(counterpartyPublicKey));
-  return decodeSellerMemoPlaintext(plaintext);
+  return decodeAddressMemoPlaintext(plaintext);
 }
+
+export const recoverSellerMemo = recoverAddressMemo;
+export const recoverBuyerAddressMemo = recoverAddressMemo;

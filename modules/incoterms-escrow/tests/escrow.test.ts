@@ -30,6 +30,7 @@ function baseTerms(): EscrowTerms {
     amount: '1000000',
     amountSalt: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('hex'),
     deadlineTimestamp: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
+    timeoutDirection: 'buyer',
     sellerMemoPublicKey: sellerMemo.publicKey,
     buyerMemoPublicKey: buyerMemo.publicKey,
   };

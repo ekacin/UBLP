@@ -11,7 +11,7 @@
 
 import type { WitnessContext } from '@midnight-ntwrk/compact-runtime';
 import type { Ledger, Witnesses } from '../../contracts/managed/escrow/contract/index.js';
-import { encryptBuyerMemo, encryptSellerMemo } from './memo';
+import { encryptBuyerMemo, encryptSellerMemo, encryptBuyerAddressMemo } from './memo';
 
 /** Compact's `Either<ZswapCoinPublicKey, ContractAddress>` representation — both branches
  * must be populated, `is_left` alone marks which one is active. */
@@ -57,6 +57,11 @@ export interface EscrowPrivateState {
   sellerAddress: EitherAddress | null;
   sellerAddressSalt: Uint8Array | null;
 
+  /** Section 5.19 — the refund address + salt the buyer commits to at lockEscrow time,
+   * used only if releaseOnTimeout ends up paying the buyer instead of the seller. */
+  buyerAddress: EitherAddress | null;
+  buyerAddressSalt: Uint8Array | null;
+
   /** The coin + salt the buyer deposited in lockEscrow. */
   depositedCoin: ShieldedCoin | null;
   depositSalt: Uint8Array | null;
@@ -90,6 +95,8 @@ export const emptyEscrowPrivateState: EscrowPrivateState = {
   portAuthoritySecretKey: null,
   sellerAddress: null,
   sellerAddressSalt: null,
+  buyerAddress: null,
+  buyerAddressSalt: null,
   depositedCoin: null,
   depositSalt: null,
   qualifiedCoin: null,
@@ -235,6 +242,50 @@ export const escrowWitnesses: Witnesses<EscrowPrivateState> = {
     return [
       context.privateState,
       required(context.privateState.agreedAmountSalt, 'agreedAmountSalt'),
+    ];
+  },
+
+  proposedBuyerAddress(
+    context: WitnessContext<Ledger, EscrowPrivateState>
+  ): [EscrowPrivateState, EitherAddress] {
+    return [context.privateState, required(context.privateState.buyerAddress, 'buyerAddress')];
+  },
+
+  buyerAddressSalt(
+    context: WitnessContext<Ledger, EscrowPrivateState>
+  ): [EscrowPrivateState, Uint8Array] {
+    return [
+      context.privateState,
+      required(context.privateState.buyerAddressSalt, 'buyerAddressSalt'),
+    ];
+  },
+
+  buyerAddressEncryptedMemo(
+    context: WitnessContext<Ledger, EscrowPrivateState>
+  ): [EscrowPrivateState, Uint8Array] {
+    const address = required(context.privateState.buyerAddress, 'buyerAddress');
+    const salt = required(context.privateState.buyerAddressSalt, 'buyerAddressSalt');
+    const ownKey = required(context.privateState.ownMemoPrivateKey, 'ownMemoPrivateKey');
+    const counterpartyKey = required(
+      context.privateState.counterpartyMemoPublicKey,
+      'counterpartyMemoPublicKey'
+    );
+    return [context.privateState, encryptBuyerAddressMemo(address, salt, ownKey, counterpartyKey)];
+  },
+
+  payoutBuyerAddress(
+    context: WitnessContext<Ledger, EscrowPrivateState>
+  ): [EscrowPrivateState, EitherAddress] {
+    // Same address — the only value that will match the commitment made at lockEscrow time.
+    return [context.privateState, required(context.privateState.buyerAddress, 'buyerAddress')];
+  },
+
+  payoutBuyerAddressSalt(
+    context: WitnessContext<Ledger, EscrowPrivateState>
+  ): [EscrowPrivateState, Uint8Array] {
+    return [
+      context.privateState,
+      required(context.privateState.buyerAddressSalt, 'buyerAddressSalt'),
     ];
   },
 };

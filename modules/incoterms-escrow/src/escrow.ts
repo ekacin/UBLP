@@ -38,6 +38,15 @@ export interface EscrowTerms {
    * auto-release timeout fires (7 days, unix seconds). */
   deadlineTimestamp: number;
   /**
+   * Section 5.19 — who `releaseOnTimeout` pays if the deadline passes with no attestation
+   * from C. No universally "correct" default exists (either direction leaves someone exposed
+   * to C simply going silent), so — like `amount` and the deadline itself — this is a term
+   * the two parties negotiate and seal into `terms`, not something the contract hardcodes.
+   * 'buyer' (refund) is the suggested default: absent proof of delivery, the money reverts
+   * to whoever it belonged to, rather than paying out on an unconfirmed claim.
+   */
+  timeoutDirection: 'buyer' | 'seller';
+  /**
    * Section 5.18 — X25519 public keys (hex) for the dual-recipient encrypted memo. Both
    * sides must already know these before `propose` is ever called on-chain — same as every
    * other field here (amount, DIDs, deadline), this is something the two parties agree on

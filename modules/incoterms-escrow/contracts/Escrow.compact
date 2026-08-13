@@ -20,14 +20,14 @@
 // PRIVACY — two independent commitment patterns, same rationale for both:
 //   1. Fund custody (shielded): coin data always comes from a witness; the ledger only
 //      stores a persistentCommit hash — the amount never reaches the chain in plaintext.
-//   2. Seller's payout address: never written to the ledger directly (that would leak
-//      "A paid B", exactly what we're trying to hide). Instead only a commitment is stored;
-//      the real address is supplied via witness at payout time and checked against it. This
-//      keeps the address both private AND immutable — `releaseOnTimeout` is deliberately
+//   2. Payout address: never written to the ledger directly (that would leak "A paid B",
+//      exactly what we're trying to hide). Instead only a commitment is stored; the real
+//      address is supplied via witness at payout time and checked against it. This keeps
+//      the address both private AND immutable — `releaseOnTimeout` is deliberately
 //      unauthenticated (anyone can call it, that's the point of a safety net), so if the
 //      address could be supplied freely at that point, funds could be redirected anywhere.
-//      `buyerAddress` was dropped entirely — v0.1 has no refund-to-buyer path, and keeping
-//      even an unused field public has a real privacy cost.
+//      Both seller AND buyer commit their own payout address (Section 5.19 — `timeoutDirection`
+//      decides which commitment `releaseOnTimeout` pays out to).
 //
 // (See AGENTS.md 5.14.1 for the experiment that validated this commitment pattern.)
 pragma language_version >= 0.22;
@@ -35,6 +35,13 @@ pragma language_version >= 0.22;
 import CompactStandardLibrary;
 
 export enum EscrowState { Empty, Proposed, Locked, Released }
+
+// Section 5.19 — who releaseOnTimeout pays if the deadline passes with no attestation from
+// C. No universally "correct" default exists (either direction leaves someone exposed to
+// C's failure), so it's a per-deal term like price or the deadline itself, not hardcoded.
+// Buyer listed first only because it's the chosen default direction, not because either
+// party can lock the other into it — see propose()'s `timeoutDir` argument.
+export enum TimeoutDirection { Buyer, Seller }
 
 struct CoinCore {
   nonce: Bytes<32>,
@@ -48,6 +55,7 @@ export ledger state: EscrowState;
 export ledger sellerKeyHash: Bytes<32>;
 export ledger portAuthorityKeyHash: Bytes<32>;   // "C" — Section 5.12
 export ledger deadlineTimestamp: Uint<64>;       // Section 7.2 — 7 days, computed off-chain
+export ledger timeoutDirection: TimeoutDirection; // Section 5.19 — who releaseOnTimeout pays
 
 // C's attestation — a single flag carrying no financial data. Exported so the seller's
 // agent can watch it via the indexer and auto-trigger claimPayout (Section 5.14.1's
@@ -58,6 +66,7 @@ export ledger loadingConfirmed: Boolean;
 // address ever reaches the chain in plaintext (see privacy note above).
 ledger heldCommitment: Bytes<32>;
 ledger sellerAddressCommitment: Bytes<32>;
+ledger buyerAddressCommitment: Bytes<32>;   // Section 5.19 — mirrors sellerAddressCommitment
 
 // The price seller and buyer agreed to off-chain (EscrowTerms.amount) was never checked
 // against what the buyer actually locks — nothing stopped `lockEscrow` from accepting any
@@ -79,6 +88,11 @@ ledger agreedAmountCommitment: Bytes<32>;
 // bytes once encrypted.
 export ledger buyerMemo: Bytes<141>;
 export ledger sellerMemo: Bytes<126>;
+// Section 5.19 — buyer's own payout-address memo, kept SEPARATE from buyerMemo (coin
+// custody data) on purpose: different concern, decoded independently, simpler to reason
+// about and test than one combined blob (see AGENTS.md 5.19 discussion). Same 97-byte
+// plaintext shape as sellerMemo (is_left + left + right + salt), same 126-byte total.
+export ledger buyerAddressMemo: Bytes<126>;
 
 witness sellerSecretKey(): Bytes<32>;
 witness portAuthoritySecretKey(): Bytes<32>;
@@ -96,6 +110,11 @@ witness agreedAmount(): Uint<128>;
 witness agreedAmountSalt(): Bytes<32>;
 witness lockedAmount(): Uint<128>;
 witness lockedAmountSalt(): Bytes<32>;
+witness proposedBuyerAddress(): Either<ZswapCoinPublicKey, ContractAddress>;
+witness buyerAddressSalt(): Bytes<32>;
+witness buyerAddressEncryptedMemo(): Bytes<126>;
+witness payoutBuyerAddress(): Either<ZswapCoinPublicKey, ContractAddress>;
+witness payoutBuyerAddressSalt(): Bytes<32>;
 
 // Domain-separated hash-based authentication — see the security skill's Pattern 2. A
 // distinct domain separator per role (seller / C) keeps the hashes independent even if
@@ -104,12 +123,13 @@ pure circuit roleKeyHash(sk: Bytes<32>, domain: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<2, Bytes<32>>>([domain, sk]);
 }
 
-export circuit propose(portAuthKeyHash: Bytes<32>, deadlineAt: Uint<64>): [] {
+export circuit propose(portAuthKeyHash: Bytes<32>, deadlineAt: Uint<64>, timeoutDir: TimeoutDirection): [] {
   assert(state == EscrowState.Empty, "escrow already proposed");
   const sk = sellerSecretKey();
   sellerKeyHash = disclose(roleKeyHash(sk, pad(32, "incoterms-escrow:seller:v1")));
   portAuthorityKeyHash = disclose(portAuthKeyHash);
   deadlineTimestamp = disclose(deadlineAt);
+  timeoutDirection = disclose(timeoutDir);
 
   const sellerAddr = proposedSellerAddress();
   const addrSalt = sellerAddressSalt();
@@ -142,6 +162,14 @@ export circuit lockEscrow(): [] {
   const core = CoinCore { nonce: coin.nonce, color: coin.color, value: coin.value };
   heldCommitment = disclose(persistentCommit<CoinCore>(core, salt));
   buyerMemo = disclose(buyerEncryptedMemo());
+
+  const buyerAddr = proposedBuyerAddress();
+  const buyerAddrSalt = buyerAddressSalt();
+  buyerAddressCommitment = disclose(
+    persistentCommit<Either<ZswapCoinPublicKey, ContractAddress>>(buyerAddr, buyerAddrSalt)
+  );
+  buyerAddressMemo = disclose(buyerAddressEncryptedMemo());
+
   state = EscrowState.Locked;
 }
 
@@ -165,7 +193,11 @@ export circuit claimPayout(): [] {
 export circuit releaseOnTimeout(): [] {
   assert(state == EscrowState.Locked, "escrow not locked");
   assert(blockTimeGte(deadlineTimestamp), "deadline not yet reached");
-  payOutToSeller();
+  if (timeoutDirection == TimeoutDirection.Buyer) {
+    payOutToBuyer();
+  } else {
+    payOutToSeller();
+  }
 }
 
 circuit payOutToSeller(): [] {
@@ -183,5 +215,26 @@ circuit payOutToSeller(): [] {
   );
 
   sendShielded(disclose(qcoin), disclose(sellerAddr), disclose(qcoin.value));
+  state = EscrowState.Released;
+}
+
+// Section 5.19 — only reachable from releaseOnTimeout with timeoutDirection == Buyer.
+// claimPayout always pays the seller (C's attestation already confirms seller performed);
+// this path exists purely as the buyer-refund safety net when C never attests.
+circuit payOutToBuyer(): [] {
+  const qcoin = heldCoinForRelease();
+  const coinSalt = releaseSalt();
+  const core = CoinCore { nonce: qcoin.nonce, color: qcoin.color, value: qcoin.value };
+  assert(persistentCommit<CoinCore>(core, coinSalt) == heldCommitment, "coin/commitment mismatch");
+
+  const buyerAddr = payoutBuyerAddress();
+  const addrSalt = payoutBuyerAddressSalt();
+  assert(
+    persistentCommit<Either<ZswapCoinPublicKey, ContractAddress>>(buyerAddr, addrSalt)
+      == buyerAddressCommitment,
+    "buyer address does not match the address committed to at lockEscrow time"
+  );
+
+  sendShielded(disclose(qcoin), disclose(buyerAddr), disclose(qcoin.value));
   state = EscrowState.Released;
 }

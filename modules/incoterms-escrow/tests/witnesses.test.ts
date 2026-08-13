@@ -8,7 +8,7 @@ import {
   contractRecipient,
   type EscrowPrivateState,
 } from '../src/contract/witnesses';
-import { recoverBuyerMemo, recoverSellerMemo } from '../src/contract/memo';
+import { recoverBuyerMemo, recoverSellerMemo, recoverBuyerAddressMemo } from '../src/contract/memo';
 
 function contextWith(privateState: EscrowPrivateState): WitnessContext<unknown, EscrowPrivateState> {
   return { ledger: {}, privateState, contractAddress: {} as never };
@@ -24,6 +24,8 @@ const SELLER_PUBKEY = new Uint8Array(32).fill(3);
 const SALT_A = new Uint8Array(32).fill(4);
 const SALT_B = new Uint8Array(32).fill(5);
 const AMOUNT_SALT = new Uint8Array(32).fill(10);
+const BUYER_PUBKEY = new Uint8Array(32).fill(11);
+const SALT_C = new Uint8Array(32).fill(12);
 
 const buyerMemoKeys = generateX25519KeyPair();
 const sellerMemoKeys = generateX25519KeyPair();
@@ -33,6 +35,8 @@ const filledState: EscrowPrivateState = {
   portAuthoritySecretKey: PORT_AUTH_SK,
   sellerAddress: zswapRecipient(SELLER_PUBKEY),
   sellerAddressSalt: SALT_A,
+  buyerAddress: zswapRecipient(BUYER_PUBKEY),
+  buyerAddressSalt: SALT_C,
   depositedCoin: { nonce: new Uint8Array(32).fill(6), color: new Uint8Array(32).fill(7), value: 1_000_000n },
   depositSalt: SALT_B,
   qualifiedCoin: {
@@ -143,6 +147,32 @@ describe('escrowWitnesses — populated privateState', () => {
     expect(s1).toBe(AMOUNT_SALT);
     expect(s2).toBe(AMOUNT_SALT);
   });
+
+  it('proposedBuyerAddress and payoutBuyerAddress return the SAME address (Section 5.19)', () => {
+    const [, proposed] = escrowWitnesses.proposedBuyerAddress(contextWith(filledState));
+    const [, payout] = escrowWitnesses.payoutBuyerAddress(contextWith(filledState));
+    expect(proposed).toBe(filledState.buyerAddress);
+    expect(payout).toBe(filledState.buyerAddress);
+  });
+
+  it('buyerAddressSalt and payoutBuyerAddressSalt return the SAME salt', () => {
+    const [, s1] = escrowWitnesses.buyerAddressSalt(contextWith(filledState));
+    const [, s2] = escrowWitnesses.payoutBuyerAddressSalt(contextWith(filledState));
+    expect(s1).toBe(SALT_C);
+    expect(s2).toBe(SALT_C);
+  });
+
+  it('buyerAddressEncryptedMemo produces bytes recoverable back to the original buyer address+salt', () => {
+    const [, memo] = escrowWitnesses.buyerAddressEncryptedMemo(contextWith(filledState));
+    expect(memo.length).toBe(126);
+    const recovered = recoverBuyerAddressMemo(
+      memo,
+      filledState.ownMemoPrivateKey!,
+      filledState.counterpartyMemoPublicKey!
+    );
+    expect(recovered.address).toEqual(filledState.buyerAddress);
+    expect(recovered.addressSalt).toEqual(SALT_C);
+  });
 });
 
 describe('escrowWitnesses — empty privateState (emptyEscrowPrivateState)', () => {
@@ -163,6 +193,11 @@ describe('escrowWitnesses — empty privateState (emptyEscrowPrivateState)', () 
     'agreedAmountSalt',
     'lockedAmount',
     'lockedAmountSalt',
+    'proposedBuyerAddress',
+    'buyerAddressSalt',
+    'buyerAddressEncryptedMemo',
+    'payoutBuyerAddress',
+    'payoutBuyerAddressSalt',
   ];
 
   for (const name of cases) {

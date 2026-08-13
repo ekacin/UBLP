@@ -15,7 +15,7 @@ import {
   zswapRecipient,
   type EscrowPrivateState,
 } from '../src/contract/witnesses';
-import { recoverBuyerMemo, recoverSellerMemo } from '../src/contract/memo';
+import { recoverBuyerMemo, recoverSellerMemo, recoverBuyerAddressMemo } from '../src/contract/memo';
 
 function contextWith(privateState: EscrowPrivateState): WitnessContext<unknown, EscrowPrivateState> {
   return { ledger: {}, privateState, contractAddress: {} as never };
@@ -46,6 +46,7 @@ describe('dual-recipient memo — end to end (terms -> propose/lockEscrow witnes
       amount: '1000000',
       amountSalt: Buffer.from(new Uint8Array(32).fill(3)).toString('hex'),
       deadlineTimestamp: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
+      timeoutDirection: 'buyer',
       sellerMemoPublicKey: sellerMemo.publicKey,
       buyerMemoPublicKey: buyerMemo.publicKey,
     };
@@ -65,6 +66,8 @@ describe('dual-recipient memo — end to end (terms -> propose/lockEscrow witnes
       portAuthoritySecretKey: null,
       sellerAddress,
       sellerAddressSalt,
+      buyerAddress: null,
+      buyerAddressSalt: null,
       depositedCoin: null,
       depositSalt: null,
       qualifiedCoin: null,
@@ -80,11 +83,15 @@ describe('dual-recipient memo — end to end (terms -> propose/lockEscrow witnes
     // buyerEncryptedMemo witness fires, encrypting coin+salt for the seller.
     const depositSalt = new Uint8Array(32).fill(5);
     const depositedCoin = { nonce: new Uint8Array(32).fill(6), color: new Uint8Array(32).fill(7), value: 1_000_000n };
+    const buyerAddressSalt = new Uint8Array(32).fill(13);
+    const buyerAddress = zswapRecipient(new Uint8Array(32).fill(14));
     const buyerState: EscrowPrivateState = {
       sellerSecretKey: null,
       portAuthoritySecretKey: null,
       sellerAddress: null,
       sellerAddressSalt: null,
+      buyerAddress,
+      buyerAddressSalt,
       depositedCoin,
       depositSalt,
       qualifiedCoin: null,
@@ -93,6 +100,9 @@ describe('dual-recipient memo — end to end (terms -> propose/lockEscrow witnes
       ...buyerMemoKeys(accepted.proposal.terms, hexToBytes(buyerMemo.privateKey)),
     };
     const [, buyerMemoCiphertext] = escrowWitnesses.buyerEncryptedMemo(contextWith(buyerState));
+    // Section 5.19 — buyer's own refund-address memo, populated at lockEscrow alongside the
+    // coin memo above (separate ledger field, same reasoning as sellerMemo).
+    const [, buyerAddressMemoCiphertext] = escrowWitnesses.buyerAddressEncryptedMemo(contextWith(buyerState));
 
     // The amount-equality fix (AGENTS.md): buyer independently re-derives the SAME agreed
     // amount+salt seller committed to at propose time, from the same terms — and the coin
@@ -141,6 +151,16 @@ describe('dual-recipient memo — end to end (terms -> propose/lockEscrow witnes
       hexToBytes(sellerMemo.publicKey)
     );
     expect(buyerSelfRecovery.depositSalt).toEqual(depositSalt);
+
+    // Section 5.19 — seller recovers buyer's refund address+salt (needed if releaseOnTimeout
+    // ever has to pay the buyer back), same dual-recipient guarantee as everything else.
+    const buyerAddressForSeller = recoverBuyerAddressMemo(
+      buyerAddressMemoCiphertext,
+      hexToBytes(sellerMemo.privateKey),
+      hexToBytes(buyerMemo.publicKey)
+    );
+    expect(buyerAddressForSeller.address).toEqual(buyerAddress);
+    expect(buyerAddressForSeller.addressSalt).toEqual(buyerAddressSalt);
   });
 });
 
