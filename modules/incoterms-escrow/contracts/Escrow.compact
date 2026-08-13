@@ -59,6 +59,20 @@ export ledger loadingConfirmed: Boolean;
 ledger heldCommitment: Bytes<32>;
 ledger sellerAddressCommitment: Bytes<32>;
 
+// AGENTS.md Section 5.18 — dual-recipient encrypted memo. Solves a gap the commitment
+// pattern above leaves open: only the party that generated a witness value (coin+salt,
+// address+salt) can ever produce it again, so losing local storage means the funds are
+// stuck forever — even `releaseOnTimeout` needs the same witness data. Each memo is
+// encrypted off-chain (TypeScript) via a static-static X25519 ECDH shared secret, so
+// EITHER the counterparty or the original author can recover it — see
+// @ublp/shared/crypto/dualRecipientMemo. The contract only stores opaque bytes; it never
+// sees the plaintext. Sizes are fixed by the plaintext layout chosen in
+// src/contract/memo.ts: buyerMemo carries coin+depositSalt (112 bytes), sellerMemo carries
+// address+addressSalt (97 bytes); both grow by 1 (scheme) + 12 (nonce) + 16 (AEAD tag) = 29
+// bytes once encrypted.
+export ledger buyerMemo: Bytes<141>;
+export ledger sellerMemo: Bytes<126>;
+
 witness sellerSecretKey(): Bytes<32>;
 witness portAuthoritySecretKey(): Bytes<32>;
 witness depositedCoin(): ShieldedCoinInfo;
@@ -69,6 +83,8 @@ witness proposedSellerAddress(): Either<ZswapCoinPublicKey, ContractAddress>;
 witness sellerAddressSalt(): Bytes<32>;
 witness payoutSellerAddress(): Either<ZswapCoinPublicKey, ContractAddress>;
 witness payoutAddressSalt(): Bytes<32>;
+witness sellerEncryptedMemo(): Bytes<126>;
+witness buyerEncryptedMemo(): Bytes<141>;
 
 // Domain-separated hash-based authentication — see the security skill's Pattern 2. A
 // distinct domain separator per role (seller / C) keeps the hashes independent even if
@@ -89,6 +105,7 @@ export circuit propose(portAuthKeyHash: Bytes<32>, deadlineAt: Uint<64>): [] {
   sellerAddressCommitment = disclose(
     persistentCommit<Either<ZswapCoinPublicKey, ContractAddress>>(sellerAddr, addrSalt)
   );
+  sellerMemo = disclose(sellerEncryptedMemo());
 
   state = EscrowState.Proposed;
 }
@@ -100,6 +117,7 @@ export circuit lockEscrow(): [] {
   receiveShielded(disclose(coin));
   const core = CoinCore { nonce: coin.nonce, color: coin.color, value: coin.value };
   heldCommitment = disclose(persistentCommit<CoinCore>(core, salt));
+  buyerMemo = disclose(buyerEncryptedMemo());
   state = EscrowState.Locked;
 }
 

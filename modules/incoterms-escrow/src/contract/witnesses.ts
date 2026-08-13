@@ -11,6 +11,7 @@
 
 import type { WitnessContext } from '@midnight-ntwrk/compact-runtime';
 import type { Ledger, Witnesses } from '../../contracts/managed/escrow/contract/index.js';
+import { encryptBuyerMemo, encryptSellerMemo } from './memo';
 
 /** Compact's `Either<ZswapCoinPublicKey, ContractAddress>` representation — both branches
  * must be populated, `is_left` alone marks which one is active. */
@@ -63,6 +64,16 @@ export interface EscrowPrivateState {
   /** Once lockEscrow lands on-chain, the coin's Merkle-tree position (mt_index) becomes
    * known — this is depositedCoin + mt_index, needed at payout time. */
   qualifiedCoin: QualifiedShieldedCoin | null;
+
+  /**
+   * AGENTS.md 5.18 — X25519 keypair for the dual-recipient memo, distinct from
+   * sellerSecretKey/portAuthoritySecretKey (those are role-auth hashes, not ECDH keys).
+   * Whichever role holds this private state (buyer or seller) fills in its own private key
+   * and the counterparty's public key — same two fields serve both directions, since ECDH
+   * is symmetric (see dualRecipientMemo.ts).
+   */
+  ownMemoPrivateKey: Uint8Array | null;
+  counterpartyMemoPublicKey: Uint8Array | null;
 }
 
 export const emptyEscrowPrivateState: EscrowPrivateState = {
@@ -73,6 +84,8 @@ export const emptyEscrowPrivateState: EscrowPrivateState = {
   depositedCoin: null,
   depositSalt: null,
   qualifiedCoin: null,
+  ownMemoPrivateKey: null,
+  counterpartyMemoPublicKey: null,
 };
 
 function required<T>(value: T | null, fieldName: string): T {
@@ -154,5 +167,31 @@ export const escrowWitnesses: Witnesses<EscrowPrivateState> = {
       context.privateState,
       required(context.privateState.sellerAddressSalt, 'sellerAddressSalt'),
     ];
+  },
+
+  sellerEncryptedMemo(
+    context: WitnessContext<Ledger, EscrowPrivateState>
+  ): [EscrowPrivateState, Uint8Array] {
+    const address = required(context.privateState.sellerAddress, 'sellerAddress');
+    const salt = required(context.privateState.sellerAddressSalt, 'sellerAddressSalt');
+    const ownKey = required(context.privateState.ownMemoPrivateKey, 'ownMemoPrivateKey');
+    const counterpartyKey = required(
+      context.privateState.counterpartyMemoPublicKey,
+      'counterpartyMemoPublicKey'
+    );
+    return [context.privateState, encryptSellerMemo(address, salt, ownKey, counterpartyKey)];
+  },
+
+  buyerEncryptedMemo(
+    context: WitnessContext<Ledger, EscrowPrivateState>
+  ): [EscrowPrivateState, Uint8Array] {
+    const coin = required(context.privateState.depositedCoin, 'depositedCoin');
+    const salt = required(context.privateState.depositSalt, 'depositSalt');
+    const ownKey = required(context.privateState.ownMemoPrivateKey, 'ownMemoPrivateKey');
+    const counterpartyKey = required(
+      context.privateState.counterpartyMemoPublicKey,
+      'counterpartyMemoPublicKey'
+    );
+    return [context.privateState, encryptBuyerMemo(coin, salt, ownKey, counterpartyKey)];
   },
 };
