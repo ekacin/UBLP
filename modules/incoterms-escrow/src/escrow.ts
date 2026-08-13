@@ -30,6 +30,16 @@ export interface EscrowTerms {
   /** Section 7.2 — if point (c) isn't confirmed / a dispute drags on past this time, the
    * auto-release timeout fires (7 days, unix seconds). */
   deadlineTimestamp: number;
+  /**
+   * Section 5.18 — X25519 public keys (hex) for the dual-recipient encrypted memo. Both
+   * sides must already know these before `propose` is ever called on-chain — same as every
+   * other field here (amount, DIDs, deadline), this is something the two parties agree on
+   * during the off-chain negotiation that precedes the on-chain propose/accept steps, not a
+   * separate channel. Sealed into `terms`, so the seller's signature makes tampering with
+   * either key detectable the same way tampering with `amount` would be.
+   */
+  sellerMemoPublicKey: string;
+  buyerMemoPublicKey: string;
 }
 
 export interface EscrowProposal {
@@ -92,4 +102,33 @@ export function acceptEscrow(proposal: EscrowProposal, acceptingBuyerDid: UBLPDi
     throw new Error('The locked amount must be positive.');
   }
   return { proposal, status: 'accepted' };
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  return new Uint8Array(Buffer.from(hex, 'hex'));
+}
+
+/**
+ * Derives the `EscrowPrivateState.ownMemoPrivateKey` / `counterpartyMemoPublicKey` pair for
+ * whichever role calls it — both read the same agreed `terms`, so seller and buyer each
+ * end up with the correct counterparty key without any extra exchange step.
+ */
+export function sellerMemoKeys(
+  terms: EscrowTerms,
+  sellerMemoPrivateKey: Uint8Array
+): { ownMemoPrivateKey: Uint8Array; counterpartyMemoPublicKey: Uint8Array } {
+  return {
+    ownMemoPrivateKey: sellerMemoPrivateKey,
+    counterpartyMemoPublicKey: hexToBytes(terms.buyerMemoPublicKey),
+  };
+}
+
+export function buyerMemoKeys(
+  terms: EscrowTerms,
+  buyerMemoPrivateKey: Uint8Array
+): { ownMemoPrivateKey: Uint8Array; counterpartyMemoPublicKey: Uint8Array } {
+  return {
+    ownMemoPrivateKey: buyerMemoPrivateKey,
+    counterpartyMemoPublicKey: hexToBytes(terms.sellerMemoPublicKey),
+  };
 }

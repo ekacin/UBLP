@@ -1,10 +1,19 @@
 import { describe, it, expect } from 'vitest';
-import { generateKeyPair } from '@ublp/shared';
+import { generateKeyPair, generateX25519KeyPair } from '@ublp/shared';
 import type { UBLPDid, ShipmentId } from '@ublp/shared';
-import { proposeEscrow, verifyProposal, acceptEscrow, type EscrowTerms } from '../src/escrow';
+import {
+  proposeEscrow,
+  verifyProposal,
+  acceptEscrow,
+  sellerMemoKeys,
+  buyerMemoKeys,
+  type EscrowTerms,
+} from '../src/escrow';
 
 const seller = generateKeyPair();
 const attacker = generateKeyPair();
+const sellerMemo = generateX25519KeyPair();
+const buyerMemo = generateX25519KeyPair();
 
 const SELLER_DID: UBLPDid = 'did:ublp:seller:acme-export';
 const BUYER_DID: UBLPDid = 'did:ublp:buyer:acme-import';
@@ -20,6 +29,8 @@ function baseTerms(): EscrowTerms {
     incoterm: 'FOB',
     amount: '1000000',
     deadlineTimestamp: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
+    sellerMemoPublicKey: sellerMemo.publicKey,
+    buyerMemoPublicKey: buyerMemo.publicKey,
   };
 }
 
@@ -64,3 +75,27 @@ describe('acceptEscrow', () => {
     expect(() => acceptEscrow(proposal, BUYER_DID)).toThrow();
   });
 });
+
+describe('sellerMemoKeys / buyerMemoKeys', () => {
+  it('each side resolves the counterparty key from the same agreed terms, no separate exchange', () => {
+    const terms = baseTerms();
+    const sellerKeys = sellerMemoKeys(terms, hexToBytes(sellerMemo.privateKey));
+    const buyerKeys = buyerMemoKeys(terms, hexToBytes(buyerMemo.privateKey));
+
+    expect(sellerKeys.counterpartyMemoPublicKey).toEqual(hexToBytes(buyerMemo.publicKey));
+    expect(buyerKeys.counterpartyMemoPublicKey).toEqual(hexToBytes(sellerMemo.publicKey));
+  });
+
+  it('tampering with a memo public key in terms breaks the seller signature', () => {
+    const proposal = proposeEscrow(baseTerms(), seller.privateKey, seller.publicKey);
+    const tampered = {
+      ...proposal,
+      terms: { ...proposal.terms, buyerMemoPublicKey: generateX25519KeyPair().publicKey },
+    };
+    expect(verifyProposal(tampered)).toBe(false);
+  });
+});
+
+function hexToBytes(hex: string): Uint8Array {
+  return new Uint8Array(Buffer.from(hex, 'hex'));
+}
