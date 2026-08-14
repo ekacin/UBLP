@@ -2,6 +2,7 @@ export * from './crypto/documentCrypto';
 export * from './crypto/blsCrypto';
 export * from './crypto/sp1Client';
 export * from './crypto/dualRecipientMemo';
+export * from './crypto/walletKeyStorage';
 export * from './identity/did';
 export * from './attestation/types';
 export * from './attestation/policy';
