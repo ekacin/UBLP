@@ -37,5 +37,9 @@
     "typescript": "^5.4.5",
     "vitest": "^2.1.0",
     "wait-on": "^9.0.10"
+  },
+  "allowScripts": {
+    "esbuild@0.21.5": true,
+    "msgpackr-extract@3.0.4": true
   }
 }

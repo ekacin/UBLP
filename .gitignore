@@ -43,3 +43,7 @@ coverage/
 
 # Internal architecture/decision notes — local only, never public
 AGENTS.md
+
+# Local devnet test wallet secrets (encrypted, but throwaway test money only —
+# never meant to leave this machine either way)
+**/.devnet-secrets/

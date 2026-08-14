@@ -11,7 +11,8 @@
   "dependencies": {
     "@ublp/shared": "*",
     "@midnight-ntwrk/compact-runtime": "0.16.0",
-    "@midnight-ntwrk/compact-js": "2.5.1"
+    "@midnight-ntwrk/compact-js": "2.5.1",
+    "@midnight-ntwrk/wallet-sdk-hd": "^3.0.3"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
