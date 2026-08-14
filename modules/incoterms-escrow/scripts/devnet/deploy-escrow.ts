@@ -11,17 +11,17 @@
 import crypto from 'crypto';
 import { deployContract } from '@midnight-ntwrk/midnight-js-contracts';
 import { generateX25519KeyPair } from '@ublp/shared';
-import { ledger, TimeoutDirection } from '../contracts/managed/escrow/contract/index.js';
+import { ledger, TimeoutDirection } from '../../contracts/managed/escrow/contract/index.js';
 import {
   compiledEscrowContract,
   EscrowPrivateStateId,
   emptyEscrowPrivateState,
   zswapRecipient,
   type EscrowPrivateState,
-} from '../src/contract/index.js';
-import { UndeployedNetworkConfig } from '../src/deploy/networks.js';
-import { buildAgentWallet, closeAgentWallet } from '../src/deploy/wallet.js';
-import { buildEscrowProviders } from '../src/deploy/providers.js';
+} from '../../src/contract/index.js';
+import { UndeployedNetworkConfig } from '../../src/deploy/networks.js';
+import { buildAgentWallet, closeAgentWallet } from '../../src/deploy/wallet.js';
+import { buildEscrowProviders } from '../../src/deploy/providers.js';
 
 const PASSPHRASE = process.env.DEVNET_WALLET_PASSPHRASE ?? 'local-devnet-only-insecure-default';
 

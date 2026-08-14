@@ -16,7 +16,7 @@ import { generateMnemonicWords, joinMnemonicWords } from '@midnight-ntwrk/wallet
 import { loadOrCreateEncryptedSecret } from '@ublp/shared';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SECRETS_DIR = path.resolve(__dirname, '..', '.devnet-secrets');
+const SECRETS_DIR = path.resolve(__dirname, '..', '..', '.devnet-secrets');
 const PASSPHRASE = process.env.DEVNET_WALLET_PASSPHRASE ?? 'local-devnet-only-insecure-default';
 
 const ROLES = ['buyer', 'seller', 'port-authority'] as const;
