@@ -47,3 +47,6 @@ AGENTS.md
 # Local devnet test wallet secrets (encrypted, but throwaway test money only —
 # never meant to leave this machine either way)
 **/.devnet-secrets/
+
+# levelPrivateStateProvider's on-disk private-state store (local devnet runtime data)
+**/midnight-level-db/
