@@ -8,7 +8,7 @@ import {
   sellerMemoKeys,
   buyerMemoKeys,
   type EscrowTerms,
-} from '../src/escrow';
+} from '../src/escrow.js';
 
 const seller = generateKeyPair();
 const attacker = generateKeyPair();

@@ -11,7 +11,7 @@
 
 import type { WitnessContext } from '@midnight-ntwrk/compact-runtime';
 import type { Ledger, Witnesses } from '../../contracts/managed/escrow/contract/index.js';
-import { encryptBuyerMemo, encryptSellerMemo, encryptBuyerAddressMemo } from './memo';
+import { encryptBuyerMemo, encryptSellerMemo, encryptBuyerAddressMemo } from './memo.js';
 
 /** Compact's `Either<ZswapCoinPublicKey, ContractAddress>` representation — both branches
  * must be populated, `is_left` alone marks which one is active. */

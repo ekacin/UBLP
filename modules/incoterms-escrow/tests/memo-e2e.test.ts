@@ -9,13 +9,13 @@ import {
   sellerMemoKeys,
   buyerMemoKeys,
   type EscrowTerms,
-} from '../src/escrow';
+} from '../src/escrow.js';
 import {
   escrowWitnesses,
   zswapRecipient,
   type EscrowPrivateState,
-} from '../src/contract/witnesses';
-import { recoverBuyerMemo, recoverSellerMemo, recoverBuyerAddressMemo } from '../src/contract/memo';
+} from '../src/contract/witnesses.js';
+import { recoverBuyerMemo, recoverSellerMemo, recoverBuyerAddressMemo } from '../src/contract/memo.js';
 
 function contextWith(privateState: EscrowPrivateState): WitnessContext<unknown, EscrowPrivateState> {
   return { ledger: {}, privateState, contractAddress: {} as never };

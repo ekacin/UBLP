@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { evaluatePolicy } from '@ublp/shared';
 import type { Attestation, UBLPDid, ShipmentId } from '@ublp/shared';
-import { fobPolicy, LOADING_CONFIRMED_CLAIM } from '../src/policies/fob';
+import { fobPolicy, LOADING_CONFIRMED_CLAIM } from '../src/policies/fob.js';
 
 const SHIPMENT_ID: ShipmentId = 'shp:test-fob-1';
 const PORT_AUTHORITY: UBLPDid = 'did:ublp:port-authority:pendik-roro';

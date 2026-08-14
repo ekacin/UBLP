@@ -5,7 +5,7 @@
  */
 
 import { encryptDualRecipientMemo, decryptDualRecipientMemo } from '@ublp/shared';
-import type { EitherAddress, ShieldedCoin } from './witnesses';
+import type { EitherAddress, ShieldedCoin } from './witnesses.js';
 
 // coin.nonce(32) + coin.color(32) + coin.value(16) + depositSalt(32)
 export const BUYER_MEMO_PLAINTEXT_LENGTH = 112;
