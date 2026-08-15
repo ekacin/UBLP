@@ -72,6 +72,8 @@ export interface AgentWallet {
   role: AgentRole;
   wallet: WalletFacade;
   midnightWalletProvider: MidnightWalletProvider;
+  shieldedSecretKeys: ZswapSecretKeys;
+  dustSecretKey: DustSecretKey;
 }
 
 /**
@@ -111,7 +113,7 @@ export async function buildAgentWallet(
     keystore
   );
 
-  return { role, wallet, midnightWalletProvider };
+  return { role, wallet, midnightWalletProvider, shieldedSecretKeys, dustSecretKey };
 }
 
 export async function closeAgentWallet(agent: AgentWallet): Promise<void> {
