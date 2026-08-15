@@ -14,11 +14,6 @@ import crypto from 'crypto';
 import * as Rx from 'rxjs';
 import { deployContract, findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
 import {
-  persistentHash,
-  CompactTypeBytes,
-  CompactTypeVector,
-} from '@midnight-ntwrk/compact-runtime';
-import {
   createShieldedCoinInfo,
   shieldedToken,
   encodeShieldedCoinInfo,
@@ -36,7 +31,7 @@ import { recoverBuyerMemo } from '../../src/contract/memo.js';
 import { UndeployedNetworkConfig } from '../../src/deploy/networks.js';
 import { buildAgentWallet, closeAgentWallet } from '../../src/deploy/wallet.js';
 import { buildEscrowProviders } from '../../src/deploy/providers.js';
-import { shieldFundsFromGenesis, waitForContractCoinMtIndex } from './lifecycle-helpers.js';
+import { shieldFundsFromGenesis, waitForContractCoinMtIndex, roleKeyHash } from './lifecycle-helpers.js';
 
 const PASSPHRASE = process.env.DEVNET_WALLET_PASSPHRASE ?? 'local-devnet-only-insecure-default';
 const AGREED_AMOUNT = 1_000_000n; // Stars
@@ -47,17 +42,6 @@ function randomBytes32(): Uint8Array {
 
 function hexToBytes(hex: string): Uint8Array {
   return new Uint8Array(Buffer.from(hex, 'hex'));
-}
-
-/** TS mirror of Escrow.compact's `roleKeyHash` pure circuit — see contract for the source of
- * truth. Verified against the real on-chain result in step 0 below before being trusted for
- * portAuthorityKeyHash (which, unlike sellerKeyHash, is never re-derived on-chain — the caller
- * must supply the already-hashed value). */
-function roleKeyHash(sk: Uint8Array, domain: string): Uint8Array {
-  const domainBytes = Buffer.alloc(32);
-  Buffer.from(domain, 'utf8').copy(domainBytes);
-  const rtType = new CompactTypeVector(2, new CompactTypeBytes(32));
-  return persistentHash(rtType, [domainBytes, Buffer.from(sk)]);
 }
 
 async function main(): Promise<void> {

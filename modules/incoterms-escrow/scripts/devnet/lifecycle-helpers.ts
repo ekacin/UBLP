@@ -5,6 +5,7 @@
 
 import crypto from 'crypto';
 import * as Rx from 'rxjs';
+import { persistentHash, CompactTypeBytes, CompactTypeVector } from '@midnight-ntwrk/compact-runtime';
 import {
   shieldedToken,
   ZswapSecretKeys,
@@ -23,6 +24,18 @@ export function randomBytes32(): Uint8Array {
 
 export function hexToBytes(hex: string): Uint8Array {
   return new Uint8Array(Buffer.from(hex, 'hex'));
+}
+
+/** TS mirror of Escrow.compact's `roleKeyHash` pure circuit — see the contract for the source
+ * of truth. Verified against the real on-chain result in full-lifecycle.ts's step 0 (the
+ * on-chain `sellerKeyHash` written by propose() matched this replica exactly) before being
+ * trusted for deriving `portAuthorityKeyHash`, which — unlike sellerKeyHash — is never
+ * re-derived on-chain: the caller must supply the already-hashed value directly. */
+export function roleKeyHash(sk: Uint8Array, domain: string): Uint8Array {
+  const domainBytes = Buffer.alloc(32);
+  Buffer.from(domain, 'utf8').copy(domainBytes);
+  const rtType = new CompactTypeVector(2, new CompactTypeBytes(32));
+  return persistentHash(rtType, [domainBytes, Buffer.from(sk)]);
 }
 
 // Same seed midnight-local-dev's genesis wallet uses — pre-funded with real shielded NIGHT
