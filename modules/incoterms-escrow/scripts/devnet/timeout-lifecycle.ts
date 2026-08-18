@@ -31,7 +31,7 @@ import {
 import { UndeployedNetworkConfig } from '../../src/deploy/networks.js';
 import { buildAgentWallet, closeAgentWallet } from '../../src/deploy/wallet.js';
 import { buildEscrowProviders } from '../../src/deploy/providers.js';
-import { shieldFundsFromGenesis, waitForContractCoinMtIndex } from './lifecycle-helpers.js';
+import { shieldFundsFromGenesis, waitForContractCoinMtIndex, openEscrowTransactionLog, logEscrowAction } from './lifecycle-helpers.js';
 
 const PASSPHRASE = process.env.DEVNET_WALLET_PASSPHRASE ?? 'local-devnet-only-insecure-default';
 const AGREED_AMOUNT = 1_000_000n;
@@ -45,6 +45,7 @@ function hexToBytes(hex: string): Uint8Array {
 
 async function main(): Promise<void> {
   const network = new UndeployedNetworkConfig();
+  const txLog = openEscrowTransactionLog();
 
   console.log('Building wallets for buyer, seller...');
   const seller = await buildAgentWallet('seller', network, PASSPHRASE);
@@ -83,8 +84,14 @@ async function main(): Promise<void> {
     agreedAmountSalt: amountSalt,
   };
   await sellerProviders.privateStateProvider.set(EscrowPrivateStateId, sellerPrivateState);
-  await deployed.callTx.propose(portAuthKeyHash, deadlineAt, TimeoutDirection.Buyer);
+  const proposeResult = await deployed.callTx.propose(portAuthKeyHash, deadlineAt, TimeoutDirection.Buyer);
   console.log(`  Deadline set to ${deadlineAt} (now + 15s), timeoutDirection = Buyer`);
+  logEscrowAction(txLog, contractAddress, 'propose', {
+    amount: AGREED_AMOUNT.toString(),
+    currency: 'NIGHT',
+    txId: proposeResult.public.txId,
+    metadata: { deadlineAt: deadlineAt.toString(), timeoutDirection: 'buyer' },
+  });
 
   console.log('\n[1] Buyer shielding funds and calling lockEscrow()...');
   await shieldFundsFromGenesis(network, buyer, AGREED_AMOUNT + 10_000n);
@@ -116,12 +123,18 @@ async function main(): Promise<void> {
     privateStateId: EscrowPrivateStateId,
     initialPrivateState: buyerPrivateState,
   });
-  await buyerContract.callTx.lockEscrow();
+  const lockResult = await buyerContract.callTx.lockEscrow();
   const stateAfterLock = ledger((await buyerProviders.publicDataProvider.queryContractState(contractAddress))!.data);
   console.log(`  state after lockEscrow(): ${stateAfterLock.state} (expect 2=Locked)`);
 
   const depositedCoinMtIndex = await waitForContractCoinMtIndex(network.indexer, contractAddress);
   console.log(`  deposited coin's real Merkle-tree mt_index: ${depositedCoinMtIndex}`);
+  logEscrowAction(txLog, contractAddress, 'lockEscrow', {
+    counterparty: seller.midnightWalletProvider.getCoinPublicKey(),
+    amount: AGREED_AMOUNT.toString(),
+    currency: 'NIGHT',
+    txId: lockResult.public.txId,
+  });
 
   console.log('\n[2] Waiting for the deadline to pass (port authority never attests)...');
   const waitMs = deadlineAt * 1000n - BigInt(Date.now()) + 6000n; // + one block's margin
@@ -145,7 +158,7 @@ async function main(): Promise<void> {
     privateStateId: EscrowPrivateStateId,
     initialPrivateState: buyerReleasePrivateState,
   });
-  await buyerReleaseContract.callTx.releaseOnTimeout();
+  const releaseResult = await buyerReleaseContract.callTx.releaseOnTimeout();
   const stateAfterRelease = ledger((await buyerProviders.publicDataProvider.queryContractState(contractAddress))!.data);
   console.log(`  state after releaseOnTimeout(): ${stateAfterRelease.state} (expect 3=Released)`);
   console.log(`  loadingConfirmed: ${stateAfterRelease.loadingConfirmed} (expect false — C never attested)`);
@@ -154,6 +167,13 @@ async function main(): Promise<void> {
   const shieldedAfter: bigint = buyerBalanceAfter.shielded?.balances?.[shieldedToken().raw] ?? 0n;
   console.log(`  buyer's shielded balance after releaseOnTimeout(): ${shieldedAfter}`);
   console.log(`  buyer refunded exactly ${AGREED_AMOUNT}: ${shieldedAfter - shieldedBefore === AGREED_AMOUNT}`);
+  logEscrowAction(txLog, contractAddress, 'releaseOnTimeout', {
+    counterparty: buyer.midnightWalletProvider.getCoinPublicKey(),
+    amount: AGREED_AMOUNT.toString(),
+    currency: 'NIGHT',
+    txId: releaseResult.public.txId,
+    metadata: { paidTo: 'buyer' },
+  });
 
   await closeAgentWallet(seller);
   await closeAgentWallet(buyer);

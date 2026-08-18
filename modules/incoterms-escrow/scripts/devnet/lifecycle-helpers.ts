@@ -4,6 +4,8 @@
  */
 
 import crypto from 'crypto';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import * as Rx from 'rxjs';
 import { persistentHash, CompactTypeBytes, CompactTypeVector } from '@midnight-ntwrk/compact-runtime';
 import {
@@ -15,8 +17,32 @@ import {
 import { ShieldedAddress, ShieldedCoinPublicKey, ShieldedEncryptionPublicKey } from '@midnight-ntwrk/wallet-sdk-address-format';
 import { FluentWalletBuilder } from '@midnight-ntwrk/testkit-js';
 import { ZswapChainState } from '@midnight-ntwrk/ledger-v8';
+import { openTransactionLog, logTransaction, type TransactionLogDb } from '@ublp/shared';
 import type { UndeployedNetworkConfig } from '../../src/deploy/networks.js';
 import { waitForSync, type AgentWallet } from '../../src/deploy/wallet.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const TRANSACTION_LOG_PATH = path.join(__dirname, '..', '..', 'data', 'transactions.db');
+
+/**
+ * Accounting/reporting log — "how many deals, how much" (AGENTS.md 5.24). Same shared module
+ * ublp-agent (Module 1) uses, distinguished by `module: 'incoterms-escrow'`. Logs plaintext
+ * deal metadata the agent already generated/holds — this is not a privacy mechanism, and isn't
+ * meant to be one; the chain's privacy guarantees protect this data from OUTSIDE observers,
+ * not from the company's own bookkeeping.
+ */
+export function openEscrowTransactionLog(): TransactionLogDb {
+  return openTransactionLog(TRANSACTION_LOG_PATH);
+}
+
+export function logEscrowAction(
+  db: TransactionLogDb,
+  dealRef: string,
+  action: string,
+  fields: { counterparty?: string; amount?: string; currency?: string; txId?: string; metadata?: Record<string, unknown> } = {}
+): void {
+  logTransaction(db, { module: 'incoterms-escrow', dealRef, action, ...fields });
+}
 
 export function randomBytes32(): Uint8Array {
   return new Uint8Array(crypto.randomBytes(32));

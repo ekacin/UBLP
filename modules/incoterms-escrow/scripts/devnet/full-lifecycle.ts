@@ -31,7 +31,7 @@ import { recoverBuyerMemo } from '../../src/contract/memo.js';
 import { UndeployedNetworkConfig } from '../../src/deploy/networks.js';
 import { buildAgentWallet, closeAgentWallet } from '../../src/deploy/wallet.js';
 import { buildEscrowProviders } from '../../src/deploy/providers.js';
-import { shieldFundsFromGenesis, waitForContractCoinMtIndex, roleKeyHash } from './lifecycle-helpers.js';
+import { shieldFundsFromGenesis, waitForContractCoinMtIndex, roleKeyHash, openEscrowTransactionLog, logEscrowAction } from './lifecycle-helpers.js';
 
 const PASSPHRASE = process.env.DEVNET_WALLET_PASSPHRASE ?? 'local-devnet-only-insecure-default';
 const AGREED_AMOUNT = 1_000_000n; // Stars
@@ -46,6 +46,7 @@ function hexToBytes(hex: string): Uint8Array {
 
 async function main(): Promise<void> {
   const network = new UndeployedNetworkConfig();
+  const txLog = openEscrowTransactionLog();
 
   console.log('Building wallets for buyer, seller, port-authority...');
   const seller = await buildAgentWallet('seller', network, PASSPHRASE);
@@ -86,7 +87,7 @@ async function main(): Promise<void> {
   await sellerProviders.privateStateProvider.set(EscrowPrivateStateId, sellerPrivateState);
 
   console.log('  Calling propose()...');
-  await deployed.callTx.propose(portAuthKeyHash, deadlineAt, TimeoutDirection.Buyer);
+  const proposeResult = await deployed.callTx.propose(portAuthKeyHash, deadlineAt, TimeoutDirection.Buyer);
 
   const stateAfterPropose = ledger((await sellerProviders.publicDataProvider.queryContractState(contractAddress))!.data);
   const expectedSellerKeyHash = roleKeyHash(sellerSecretKey, 'incoterms-escrow:seller:v1');
@@ -96,6 +97,12 @@ async function main(): Promise<void> {
   if (!onChainMatches) {
     throw new Error('roleKeyHash() TS replica does not match the real circuit — portAuthorityKeyHash would be wrong.');
   }
+  logEscrowAction(txLog, contractAddress, 'propose', {
+    amount: AGREED_AMOUNT.toString(),
+    currency: 'NIGHT',
+    txId: proposeResult.public.txId,
+    metadata: { deadlineAt: deadlineAt.toString(), timeoutDirection: 'buyer' },
+  });
 
   // --- Step 1: buyer shields funds, then locks them into the escrow ---
   console.log('\n[1] Buyer shielding funds and calling lockEscrow()...');
@@ -130,12 +137,18 @@ async function main(): Promise<void> {
     initialPrivateState: buyerPrivateState,
   });
 
-  await buyerContract.callTx.lockEscrow();
+  const lockResult = await buyerContract.callTx.lockEscrow();
   const stateAfterLock = ledger((await buyerProviders.publicDataProvider.queryContractState(contractAddress))!.data);
   console.log(`  state after lockEscrow(): ${stateAfterLock.state} (expect 2=Locked)`);
 
   const depositedCoinMtIndex = await waitForContractCoinMtIndex(network.indexer, contractAddress);
   console.log(`  deposited coin's real Merkle-tree mt_index: ${depositedCoinMtIndex}`);
+  logEscrowAction(txLog, contractAddress, 'lockEscrow', {
+    counterparty: seller.midnightWalletProvider.getCoinPublicKey(),
+    amount: AGREED_AMOUNT.toString(),
+    currency: 'NIGHT',
+    txId: lockResult.public.txId,
+  });
 
   // --- Step 2: port authority attests loading confirmed ---
   console.log('\n[2] Port authority calling attestLoadingConfirmed()...');
@@ -150,9 +163,10 @@ async function main(): Promise<void> {
     privateStateId: EscrowPrivateStateId,
     initialPrivateState: portAuthorityPrivateState,
   });
-  await portAuthorityContract.callTx.attestLoadingConfirmed();
+  const attestResult = await portAuthorityContract.callTx.attestLoadingConfirmed();
   const stateAfterAttest = ledger((await portAuthorityProviders.publicDataProvider.queryContractState(contractAddress))!.data);
   console.log(`  loadingConfirmed after attest: ${stateAfterAttest.loadingConfirmed} (expect true)`);
+  logEscrowAction(txLog, contractAddress, 'attestLoadingConfirmed', { txId: attestResult.public.txId });
 
   // --- Step 3: seller recovers the deposited coin from buyerMemo (NOT copied out-of-band —
   // this is the real dual-recipient-memo recovery path, Section 5.18) and claims payout ---
@@ -178,9 +192,15 @@ async function main(): Promise<void> {
     privateStateId: EscrowPrivateStateId,
     initialPrivateState: sellerClaimPrivateState,
   });
-  await sellerClaimContract.callTx.claimPayout();
+  const claimResult = await sellerClaimContract.callTx.claimPayout();
   const stateAfterClaim = ledger((await sellerProviders.publicDataProvider.queryContractState(contractAddress))!.data);
   console.log(`  state after claimPayout(): ${stateAfterClaim.state} (expect 3=Released)`);
+  logEscrowAction(txLog, contractAddress, 'claimPayout', {
+    counterparty: buyer.midnightWalletProvider.getCoinPublicKey(),
+    amount: recovered.coin.value.toString(),
+    currency: 'NIGHT',
+    txId: claimResult.public.txId,
+  });
 
   const sellerStateAfter: any = await Rx.firstValueFrom(seller.wallet.state());
   console.log(`  seller's shielded balance after claim: ${sellerStateAfter.shielded?.balances?.[shieldedToken().raw] ?? 0n}`);

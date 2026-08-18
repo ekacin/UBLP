@@ -14,6 +14,8 @@ import {
   loadOrGenerateAgentKeys,
   createAgentServer,
   startAgentServer,
+  openTransactionLog,
+  logTransaction,
 } from '@ublp/shared';
 import {
   UBLPVerifiableCredential,
@@ -27,6 +29,23 @@ const L2_VERIFIER_URL = process.env.L2_VERIFIER_URL ?? 'http://localhost:3003';
 const COMMITTEE_URL = process.env.COMMITTEE_URL ?? 'http://localhost:3004';
 const AGENT_DID = process.env.AGENT_DID ?? 'did:ublp:agent:default';
 const AGENT_KEYS_PATH = path.join(__dirname, '..', 'data', 'agent-keypair.json');
+const TRANSACTION_LOG_PATH = path.join(__dirname, '..', 'data', 'transactions.db');
+
+/**
+ * Reporting/accounting log — "how many verifications did we run, of what kind, this month"
+ * (see AGENTS.md 5.24). Logs only metadata about the verification event (claim type, pass/
+ * fail, references) — never the raw document content or the ZK proof bytes themselves. The
+ * proof/document are ephemeral to the request; this is a durable, queryable record on top.
+ */
+const transactionLogDb = openTransactionLog(TRANSACTION_LOG_PATH);
+
+function logVerificationEvent(
+  documentId: string,
+  action: 'customs-verified' | 'customs-verification-rejected',
+  metadata: Record<string, unknown>
+): void {
+  logTransaction(transactionLogDb, { module: 'zk-customs', dealRef: documentId, action, metadata });
+}
 
 /**
  * K-3: Agent VP'yi kendi P-256 anahtarıyla imzalar.
@@ -160,6 +179,7 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
 
       if (!isValid) {
         console.error('[UBLP Agent] ✗ VC imzası GEÇERSİZ.');
+        logVerificationEvent(cs.documentId, 'customs-verification-rejected', { reason: 'invalid-ministry-signature' });
         return reply.status(400).send({ error: 'Bakanlık VC imzası doğrulanamadı.' }) as never;
       }
       console.log('[UBLP Agent] ✓ VC imzası geçerli.');
@@ -209,6 +229,7 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error('[UBLP Agent] ✗ Kurul attestation başarısız:', msg);
+        logVerificationEvent(cs.documentId, 'customs-verification-rejected', { reason: 'committee-attestation-failed', detail: msg });
         return reply.status(502).send({ error: 'Kurul ZK kanıtını doğrulayamadı.', detail: msg }) as never;
       }
       console.log('[UBLP Agent] ✓ Kurul BLS attestation alındı. signers:', committeeAttestation.signerIds.length);
@@ -284,15 +305,23 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error('[UBLP Agent] ✗ L2 Verifier\'a ulaşılamadı:', msg);
+        logVerificationEvent(cs.documentId, 'customs-verification-rejected', { reason: 'l2-unreachable', detail: msg });
         return reply.status(503).send({ error: 'L2 Verifier servisine ulaşılamadı.', detail: msg }) as never;
       }
 
       if (!l2Response.ok) {
         console.error('[UBLP Agent] ✗ L2 reddetti:', l2Result);
+        logVerificationEvent(cs.documentId, 'customs-verification-rejected', { reason: 'l2-rejected', l2Result });
         return reply.status(502).send({ error: 'L2 Verifier onaylamadı.', detail: l2Result }) as never;
       }
 
       console.log('[UBLP Agent] ✓ L2 onayladı. Durum:', l2Result.status);
+      logVerificationEvent(cs.documentId, 'customs-verified', {
+        proofSystem: zkProof.proof_system,
+        l2Status: l2Result.status,
+        issuer: vc.issuer,
+        holderDid,
+      });
       return { presentation, l2Result };
     }
   );

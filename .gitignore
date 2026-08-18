@@ -13,6 +13,9 @@ dist/
 **/ublp-agent/data/
 **/l2-verifier-mock/data/
 
+# Transaction audit log (SQLite) — real deal/counterparty data, company-internal only
+**/incoterms-escrow/data/
+
 # Logs
 *.log
 
