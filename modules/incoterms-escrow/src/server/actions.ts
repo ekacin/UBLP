@@ -87,9 +87,15 @@ async function resolveMtIndex(ctx: AgentContext, contractAddress: string, coinDe
 
 // ---- propose (seller only) ----
 
+const DEFAULT_DURATION_SECONDS = 7 * 24 * 60 * 60; // AGENTS.md 7.2's suggested default (7 days)
+
 export interface ProposeParams {
   portAuthorityKeyHashHex: string; // C's roleKeyHash, shared during off-chain negotiation
-  deadlineAtSeconds: number;
+  /** AGENTS.md 5.29's fix — the LENGTH of the safety window, not an absolute timestamp. The
+   * absolute deadline is now fixed at lockEscrow time (see LockParams), so it always starts
+   * from the real moment funds are locked, not from whenever propose() happened to be called.
+   * Optional, defaults to 7 days (AGENTS.md 7.2's suggested default). */
+  durationSeconds?: number;
   /** AGENTS.md 5.19/5.20 — a per-deal negotiated term, not a protocol constant. Optional here
    * because the documented default is 'buyer' ("seçilebilir ama varsayılan buyer") — callers
    * who don't want to think about it get the suggested default; callers who negotiated
@@ -131,9 +137,10 @@ export async function proposeDeal(ctx: AgentContext, params: ProposeParams): Pro
   saveDealPrivateState(ctx.db, contractAddress, privateState);
 
   const timeoutDirection = params.timeoutDirection ?? 'buyer';
+  const durationSeconds = params.durationSeconds ?? DEFAULT_DURATION_SECONDS;
   const result = await deployed.callTx.propose(
     hexToBytes(params.portAuthorityKeyHashHex),
-    BigInt(params.deadlineAtSeconds),
+    BigInt(durationSeconds),
     timeoutDirection === 'buyer' ? TimeoutDirection.Buyer : TimeoutDirection.Seller
   );
 
@@ -141,7 +148,7 @@ export async function proposeDeal(ctx: AgentContext, params: ProposeParams): Pro
     amount: params.agreedAmount,
     currency: 'NIGHT',
     txId: result.public.txId,
-    metadata: { deadlineAtSeconds: params.deadlineAtSeconds, timeoutDirection },
+    metadata: { durationSeconds, timeoutDirection },
   });
 
   return { contractAddress, txId: result.public.txId };
@@ -191,12 +198,32 @@ export async function lockDeal(ctx: AgentContext, params: LockParams): Promise<{
   await ctx.providers.privateStateProvider.set(EscrowPrivateStateId, privateState);
   saveDealPrivateState(ctx.db, params.contractAddress, privateState);
 
-  const result = await contract.callTx.lockEscrow();
+  // Escrow.compact anchors deadlineTimestamp to this value (bounded-checked against real
+  // block time via blockTimeGte/blockTimeLte, tolerance 300s) rather than to whenever
+  // propose() happened — see AGENTS.md 5.29 and the contract's lockEscrow() comment.
+  const claimedLockTime = BigInt(Math.floor(Date.now() / 1000));
+  const result = await contract.callTx.lockEscrow(claimedLockTime);
   logAction(ctx, params.contractAddress, 'lockEscrow', {
     amount: params.agreedAmount,
     currency: 'NIGHT',
     txId: result.public.txId,
   });
+
+  // Discover and cache mt_index NOW, while the indexer is known-reachable (we just used it),
+  // instead of waiting until claimDeal/releaseTimeoutDeal — potentially days later — need it.
+  // By then a temporarily-down indexer would block spending; resolving it here removes that
+  // dependency entirely for the rest of this deal's lifecycle. Best-effort: a failure here
+  // must not fail the lock itself (the funds are already committed on-chain regardless) —
+  // resolveMtIndex's lazy cache-first lookup in claimDeal/releaseTimeoutDeal is still the
+  // fallback if this doesn't manage to complete.
+  try {
+    await resolveMtIndex(ctx, params.contractAddress, 'deposited');
+  } catch (err) {
+    console.warn(
+      `[lockDeal] Could not pre-resolve mt_index for ${params.contractAddress} — will retry lazily at claim/release time.`,
+      err
+    );
+  }
 
   return { txId: result.public.txId };
 }

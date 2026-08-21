@@ -88,9 +88,10 @@ async function main(): Promise<void> {
 
   const amountSalt = randomBytes32();
   const sellerAddressSalt = randomBytes32();
-  // Long deadline (7 days) — releaseOnTimeout's "too early" rejection needs it in the future
-  // for the entire script run.
-  const deadlineAt = BigInt(Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60);
+  // Long duration (7 days) — releaseOnTimeout's "too early" rejection needs the eventual
+  // deadline (fixed at lockEscrow time, AGENTS.md 5.29) to stay in the future for the entire
+  // script run.
+  const durationSeconds = BigInt(7 * 24 * 60 * 60);
 
   const sellerPrivateState: EscrowPrivateState = {
     ...emptyEscrowPrivateState,
@@ -103,14 +104,14 @@ async function main(): Promise<void> {
     agreedAmountSalt: amountSalt,
   };
   await sellerProviders.privateStateProvider.set(EscrowPrivateStateId, sellerPrivateState);
-  await deployed.callTx.propose(portAuthKeyHash, deadlineAt, TimeoutDirection.Buyer);
+  await deployed.callTx.propose(portAuthKeyHash, durationSeconds, TimeoutDirection.Buyer);
   console.log('  propose() succeeded.');
 
   console.log('\n[1] Guards around propose() / lockEscrow() preconditions:');
 
   await expectRejected('propose() a second time on an already-Proposed contract', async () => {
     await sellerProviders.privateStateProvider.set(EscrowPrivateStateId, sellerPrivateState);
-    await deployed.callTx.propose(portAuthKeyHash, deadlineAt, TimeoutDirection.Buyer);
+    await deployed.callTx.propose(portAuthKeyHash, durationSeconds, TimeoutDirection.Buyer);
   });
 
   const depositSalt = randomBytes32();
@@ -123,6 +124,9 @@ async function main(): Promise<void> {
   };
   const buyerAddressSalt = randomBytes32();
   const buyerAddress = zswapRecipient(hexToBytes(buyer.midnightWalletProvider.getCoinPublicKey()));
+  // AGENTS.md 5.29 — every lockEscrow() call below needs a valid claimedLockTime so each test
+  // fails for the ONE specific guard being exercised, not for an unrelated block-time mismatch.
+  const claimedLockTime = () => BigInt(Math.floor(Date.now() / 1000));
   const basebuyerPrivateState: EscrowPrivateState = {
     ...emptyEscrowPrivateState,
     depositSalt,
@@ -145,7 +149,7 @@ async function main(): Promise<void> {
       privateStateId: EscrowPrivateStateId,
       initialPrivateState: wrongState,
     });
-    await contract.callTx.lockEscrow();
+    await contract.callTx.lockEscrow(claimedLockTime());
   });
 
   await expectRejected('lockEscrow() with a lockedAmount that does not match agreedAmountCommitment', async () => {
@@ -161,7 +165,7 @@ async function main(): Promise<void> {
       privateStateId: EscrowPrivateStateId,
       initialPrivateState: wrongState,
     });
-    await contract.callTx.lockEscrow();
+    await contract.callTx.lockEscrow(claimedLockTime());
   });
 
   console.log('\n[2] Real lockEscrow() (needed to test the guards past this point)...');
@@ -178,7 +182,7 @@ async function main(): Promise<void> {
     privateStateId: EscrowPrivateStateId,
     initialPrivateState: realBuyerPrivateState,
   });
-  await buyerContract.callTx.lockEscrow();
+  await buyerContract.callTx.lockEscrow(claimedLockTime());
   const stateAfterLock = ledger((await buyerProviders.publicDataProvider.queryContractState(contractAddress))!.data);
   console.log(`  state after lockEscrow(): ${stateAfterLock.state} (expect 2=Locked)`);
   const depositedCoinMtIndex = await waitForContractCoinMtIndex(network.indexer, contractAddress);
@@ -193,7 +197,7 @@ async function main(): Promise<void> {
       privateStateId: EscrowPrivateStateId,
       initialPrivateState: realBuyerPrivateState,
     });
-    await contract.callTx.lockEscrow();
+    await contract.callTx.lockEscrow(claimedLockTime());
   });
 
   await expectRejected('claimPayout() before the port authority has attested', async () => {

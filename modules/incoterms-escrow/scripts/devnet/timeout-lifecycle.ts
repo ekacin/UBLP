@@ -71,7 +71,9 @@ async function main(): Promise<void> {
 
   const amountSalt = randomBytes32();
   const sellerAddressSalt = randomBytes32();
-  const deadlineAt = BigInt(Math.floor(Date.now() / 1000) + 15);
+  // AGENTS.md 5.29 — a LENGTH now, not an absolute timestamp; the actual deadline gets fixed
+  // at lockEscrow() time, below. Kept short (15s) so this script doesn't take long to run.
+  const durationSeconds = 15n;
 
   const sellerPrivateState: EscrowPrivateState = {
     ...emptyEscrowPrivateState,
@@ -84,13 +86,13 @@ async function main(): Promise<void> {
     agreedAmountSalt: amountSalt,
   };
   await sellerProviders.privateStateProvider.set(EscrowPrivateStateId, sellerPrivateState);
-  const proposeResult = await deployed.callTx.propose(portAuthKeyHash, deadlineAt, TimeoutDirection.Buyer);
-  console.log(`  Deadline set to ${deadlineAt} (now + 15s), timeoutDirection = Buyer`);
+  const proposeResult = await deployed.callTx.propose(portAuthKeyHash, durationSeconds, TimeoutDirection.Buyer);
+  console.log(`  Duration set to ${durationSeconds}s, timeoutDirection = Buyer`);
   logEscrowAction(txLog, contractAddress, 'propose', {
     amount: AGREED_AMOUNT.toString(),
     currency: 'NIGHT',
     txId: proposeResult.public.txId,
-    metadata: { deadlineAt: deadlineAt.toString(), timeoutDirection: 'buyer' },
+    metadata: { durationSeconds: durationSeconds.toString(), timeoutDirection: 'buyer' },
   });
 
   console.log('\n[1] Buyer shielding funds and calling lockEscrow()...');
@@ -123,9 +125,12 @@ async function main(): Promise<void> {
     privateStateId: EscrowPrivateStateId,
     initialPrivateState: buyerPrivateState,
   });
-  const lockResult = await buyerContract.callTx.lockEscrow();
+  const claimedLockTime = BigInt(Math.floor(Date.now() / 1000));
+  const lockResult = await buyerContract.callTx.lockEscrow(claimedLockTime);
   const stateAfterLock = ledger((await buyerProviders.publicDataProvider.queryContractState(contractAddress))!.data);
   console.log(`  state after lockEscrow(): ${stateAfterLock.state} (expect 2=Locked)`);
+  const deadlineAt = BigInt(stateAfterLock.deadlineTimestamp);
+  console.log(`  deadlineTimestamp fixed at lock time: ${deadlineAt} (claimedLockTime ${claimedLockTime} + ${durationSeconds}s)`);
 
   const depositedCoinMtIndex = await waitForContractCoinMtIndex(network.indexer, contractAddress);
   console.log(`  deposited coin's real Merkle-tree mt_index: ${depositedCoinMtIndex}`);

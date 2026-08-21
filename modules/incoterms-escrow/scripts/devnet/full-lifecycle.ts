@@ -72,7 +72,7 @@ async function main(): Promise<void> {
 
   const amountSalt = randomBytes32();
   const sellerAddressSalt = randomBytes32();
-  const deadlineAt = BigInt(Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60);
+  const durationSeconds = BigInt(7 * 24 * 60 * 60); // AGENTS.md 5.29 — length, not an absolute timestamp anymore
 
   const sellerPrivateState: EscrowPrivateState = {
     ...emptyEscrowPrivateState,
@@ -87,7 +87,7 @@ async function main(): Promise<void> {
   await sellerProviders.privateStateProvider.set(EscrowPrivateStateId, sellerPrivateState);
 
   console.log('  Calling propose()...');
-  const proposeResult = await deployed.callTx.propose(portAuthKeyHash, deadlineAt, TimeoutDirection.Buyer);
+  const proposeResult = await deployed.callTx.propose(portAuthKeyHash, durationSeconds, TimeoutDirection.Buyer);
 
   const stateAfterPropose = ledger((await sellerProviders.publicDataProvider.queryContractState(contractAddress))!.data);
   const expectedSellerKeyHash = roleKeyHash(sellerSecretKey, 'incoterms-escrow:seller:v1');
@@ -101,7 +101,7 @@ async function main(): Promise<void> {
     amount: AGREED_AMOUNT.toString(),
     currency: 'NIGHT',
     txId: proposeResult.public.txId,
-    metadata: { deadlineAt: deadlineAt.toString(), timeoutDirection: 'buyer' },
+    metadata: { durationSeconds: durationSeconds.toString(), timeoutDirection: 'buyer' },
   });
 
   // --- Step 1: buyer shields funds, then locks them into the escrow ---
@@ -137,9 +137,13 @@ async function main(): Promise<void> {
     initialPrivateState: buyerPrivateState,
   });
 
-  const lockResult = await buyerContract.callTx.lockEscrow();
+  // AGENTS.md 5.29 — deadlineTimestamp is now anchored here (blockTimeGte/blockTimeLte-checked
+  // against this claimed value), not at propose() time.
+  const claimedLockTime = BigInt(Math.floor(Date.now() / 1000));
+  const lockResult = await buyerContract.callTx.lockEscrow(claimedLockTime);
   const stateAfterLock = ledger((await buyerProviders.publicDataProvider.queryContractState(contractAddress))!.data);
   console.log(`  state after lockEscrow(): ${stateAfterLock.state} (expect 2=Locked)`);
+  console.log(`  deadlineTimestamp now fixed at: ${stateAfterLock.deadlineTimestamp} (expect ~claimedLockTime + durationSeconds)`);
 
   const depositedCoinMtIndex = await waitForContractCoinMtIndex(network.indexer, contractAddress);
   console.log(`  deposited coin's real Merkle-tree mt_index: ${depositedCoinMtIndex}`);

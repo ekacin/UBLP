@@ -54,7 +54,16 @@ export ledger state: EscrowState;
 // Terms fixed at propose time — immutable afterward.
 export ledger sellerKeyHash: Bytes<32>;
 export ledger portAuthorityKeyHash: Bytes<32>;   // "C" — Section 5.12
-export ledger deadlineTimestamp: Uint<64>;       // Section 7.2 — 7 days, computed off-chain
+// The AGREED LENGTH of the safety window (e.g. 7 days) — fixed at propose time, same as
+// price/timeoutDirection. The absolute deadline itself is fixed later, at lockEscrow time
+// (see deadlineTimestamp below) — otherwise a buyer who delays locking eats into C's real
+// window to attest, through no fault of C's.
+export ledger durationSeconds: Uint<64>;
+// Fixed at lockEscrow time, NOT propose time (see durationSeconds above) — this is the one
+// field on this ledger whose value is anchored to a caller-supplied timestamp rather than
+// derived purely from committed data; see lockEscrow()'s blockTimeGte/blockTimeLte check for
+// why that's still safe (bounded to a small tolerance window, not an open self-declaration).
+export ledger deadlineTimestamp: Uint<64>;
 export ledger timeoutDirection: TimeoutDirection; // Section 5.19 — who releaseOnTimeout pays
 
 // C's attestation — a single flag carrying no financial data. Exported so the seller's
@@ -123,12 +132,12 @@ pure circuit roleKeyHash(sk: Bytes<32>, domain: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<2, Bytes<32>>>([domain, sk]);
 }
 
-export circuit propose(portAuthKeyHash: Bytes<32>, deadlineAt: Uint<64>, timeoutDir: TimeoutDirection): [] {
+export circuit propose(portAuthKeyHash: Bytes<32>, durationSecondsArg: Uint<64>, timeoutDir: TimeoutDirection): [] {
   assert(state == EscrowState.Empty, "escrow already proposed");
   const sk = sellerSecretKey();
   sellerKeyHash = disclose(roleKeyHash(sk, pad(32, "incoterms-escrow:seller:v1")));
   portAuthorityKeyHash = disclose(portAuthKeyHash);
-  deadlineTimestamp = disclose(deadlineAt);
+  durationSeconds = disclose(durationSecondsArg);
   timeoutDirection = disclose(timeoutDir);
 
   const sellerAddr = proposedSellerAddress();
@@ -145,8 +154,23 @@ export circuit propose(portAuthKeyHash: Bytes<32>, deadlineAt: Uint<64>, timeout
   state = EscrowState.Proposed;
 }
 
-export circuit lockEscrow(): [] {
+export circuit lockEscrow(claimedLockTime: Uint<64>): [] {
   assert(state == EscrowState.Proposed, "no active proposal");
+
+  // How far claimedLockTime (buyer's self-declared "now") may lag behind the real block time
+  // before it's rejected. Bounds the exploit a fully-open self-declared timestamp would allow
+  // (a buyer claiming an arbitrarily early "now" to shrink C's real attestation window
+  // towards zero) down to a few minutes — negligible against a multi-day safety window, not
+  // zero risk but not a meaningful one either.
+  const toleranceSeconds: Uint<64> = 300;
+
+  const lt = disclose(claimedLockTime);
+  assert(
+    blockTimeGte(lt) && blockTimeLte((lt + toleranceSeconds) as Uint<64>),
+    "claimed lock time is not close enough to the real block time"
+  );
+  deadlineTimestamp = disclose((lt + durationSeconds) as Uint<64>);
+
   const coin = depositedCoin();
   const salt = depositSalt();
 

@@ -75,7 +75,7 @@ async function main(): Promise<void> {
   await providers.privateStateProvider.set(EscrowPrivateStateId, sellerPrivateState);
   await deployed.callTx.propose(
     randomBytes32(),
-    BigInt(Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60),
+    BigInt(7 * 24 * 60 * 60), // durationSeconds now (AGENTS.md 5.29), not an absolute deadline
     TimeoutDirection.Buyer
   );
 
