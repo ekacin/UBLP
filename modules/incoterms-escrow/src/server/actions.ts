@@ -308,13 +308,21 @@ export interface DealStatus {
   contractAddress: string;
   state: number; // Escrow.compact's EscrowState enum ordinal (0 Empty..3 Released)
   loadingConfirmed: boolean;
+  deadlineTimestamp: number; // unix seconds
+  timeoutDirection: 'buyer' | 'seller';
 }
 
 export async function getDealStatus(ctx: AgentContext, contractAddress: string): Promise<DealStatus | null> {
   const raw = await ctx.providers.publicDataProvider.queryContractState(contractAddress);
   if (!raw) return null;
   const state = ledger(raw.data);
-  return { contractAddress, state: Number(state.state), loadingConfirmed: state.loadingConfirmed };
+  return {
+    contractAddress,
+    state: Number(state.state),
+    loadingConfirmed: state.loadingConfirmed,
+    deadlineTimestamp: Number(state.deadlineTimestamp),
+    timeoutDirection: Number(state.timeoutDirection) === 0 ? 'buyer' : 'seller',
+  };
 }
 
 /** Helper for deriving `portAuthorityKeyHashHex` to hand to a counterparty during off-chain

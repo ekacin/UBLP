@@ -16,6 +16,7 @@ import { loadOrCreateSettlementIdentity } from './identity.js';
 import { openSettlementDb } from './db.js';
 import { AuthStore } from './auth.js';
 import { registerSettlementRoutes } from './routes.js';
+import { startDealWatcher } from './watcher.js';
 import type { AgentContext } from './actions.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -57,8 +58,11 @@ export async function startSettlementAgent(config: SettlementAgentConfig): Promi
   registerSettlementRoutes(app, ctx, auth);
   await startAgentServer(app, { port: config.port });
 
+  const watcher = startDealWatcher(ctx);
+
   return {
     stop: async () => {
+      watcher.stop();
       clearInterval(sweepInterval);
       await app.close();
       db.close();

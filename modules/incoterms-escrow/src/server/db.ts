@@ -200,3 +200,12 @@ export function loadDealPrivateState(db: SettlementDb, dealRef: string): EscrowP
     | undefined;
   return row ? (JSON.parse(row.state, reviver) as EscrowPrivateState) : null;
 }
+
+/** Every deal this agent has ever touched (propose or lockEscrow set a row) — the watcher's
+ * starting point for "which deals do I even need to check". */
+export function listDealRefs(db: SettlementDb): string[] {
+  const rows = db.prepare(`SELECT dealRef FROM deal_private_state ORDER BY updatedAt ASC`).all() as {
+    dealRef: string;
+  }[];
+  return rows.map((r) => r.dealRef);
+}

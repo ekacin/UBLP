@@ -13,6 +13,7 @@ import {
   setCachedMtIndex,
   saveDealPrivateState,
   loadDealPrivateState,
+  listDealRefs,
   type SettlementDb,
 } from '../../src/server/db.js';
 import { emptyEscrowPrivateState, zswapRecipient } from '../../src/contract/index.js';
@@ -122,5 +123,19 @@ describe('deal_private_state', () => {
     saveDealPrivateState(db, 'deal-5', { ...emptyEscrowPrivateState, agreedAmount: 1n });
     saveDealPrivateState(db, 'deal-5', { ...emptyEscrowPrivateState, agreedAmount: 2n });
     expect(loadDealPrivateState(db, 'deal-5')!.agreedAmount).toBe(2n);
+  });
+});
+
+describe('listDealRefs', () => {
+  it('returns an empty list when no deal has been saved', () => {
+    expect(listDealRefs(db)).toEqual([]);
+  });
+
+  it('lists every distinct dealRef that has private state saved, without duplicates', () => {
+    saveDealPrivateState(db, 'deal-a', emptyEscrowPrivateState);
+    saveDealPrivateState(db, 'deal-b', emptyEscrowPrivateState);
+    saveDealPrivateState(db, 'deal-a', { ...emptyEscrowPrivateState, agreedAmount: 5n }); // update, not a new row
+
+    expect(listDealRefs(db).sort()).toEqual(['deal-a', 'deal-b']);
   });
 });
