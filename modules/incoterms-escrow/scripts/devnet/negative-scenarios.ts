@@ -233,8 +233,8 @@ async function main(): Promise<void> {
       ...emptyEscrowPrivateState,
       qualifiedCoin: { ...realDepositedCoin, mt_index: depositedCoinMtIndex },
       depositSalt,
-      payoutBuyerAddress: buyerAddress,
-      payoutBuyerAddressSalt: buyerAddressSalt,
+      buyerAddress,
+      buyerAddressSalt,
     };
     await buyerProviders.privateStateProvider.set(EscrowPrivateStateId, releaseState);
     const contract = await findDeployedContract(buyerProviders, {

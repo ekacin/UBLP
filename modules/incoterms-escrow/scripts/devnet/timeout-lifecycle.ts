@@ -148,9 +148,9 @@ async function main(): Promise<void> {
   const buyerReleasePrivateState: EscrowPrivateState = {
     ...buyerPrivateState,
     qualifiedCoin: { ...buyerPrivateState.depositedCoin!, mt_index: depositedCoinMtIndex },
-    payoutBuyerAddress: buyerAddress,
-    payoutBuyerAddressSalt: buyerAddressSalt,
-  } as EscrowPrivateState;
+    // buyerAddress/buyerAddressSalt are already correct here (inherited from buyerPrivateState,
+    // set during lockEscrow) — no separate "payout" fields exist on EscrowPrivateState.
+  };
   await buyerProviders.privateStateProvider.set(EscrowPrivateStateId, buyerReleasePrivateState);
   const buyerReleaseContract = await findDeployedContract(buyerProviders, {
     contractAddress,
