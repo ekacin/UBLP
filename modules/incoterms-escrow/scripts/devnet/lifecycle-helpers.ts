@@ -7,7 +7,6 @@ import crypto from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import * as Rx from 'rxjs';
-import { persistentHash, CompactTypeBytes, CompactTypeVector } from '@midnight-ntwrk/compact-runtime';
 import {
   shieldedToken,
   ZswapSecretKeys,
@@ -16,10 +15,10 @@ import {
 } from '@midnight-ntwrk/midnight-js-protocol/ledger';
 import { ShieldedAddress, ShieldedCoinPublicKey, ShieldedEncryptionPublicKey } from '@midnight-ntwrk/wallet-sdk-address-format';
 import { FluentWalletBuilder } from '@midnight-ntwrk/testkit-js';
-import { ZswapChainState } from '@midnight-ntwrk/ledger-v8';
 import { openTransactionLog, logTransaction, type TransactionLogDb } from '@ublp/shared';
 import type { UndeployedNetworkConfig } from '../../src/deploy/networks.js';
 import { waitForSync, type AgentWallet } from '../../src/deploy/wallet.js';
+export { roleKeyHash } from '../../src/contract/roleKeyHash.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TRANSACTION_LOG_PATH = path.join(__dirname, '..', '..', 'data', 'transactions.db');
@@ -50,18 +49,6 @@ export function randomBytes32(): Uint8Array {
 
 export function hexToBytes(hex: string): Uint8Array {
   return new Uint8Array(Buffer.from(hex, 'hex'));
-}
-
-/** TS mirror of Escrow.compact's `roleKeyHash` pure circuit — see the contract for the source
- * of truth. Verified against the real on-chain result in full-lifecycle.ts's step 0 (the
- * on-chain `sellerKeyHash` written by propose() matched this replica exactly) before being
- * trusted for deriving `portAuthorityKeyHash`, which — unlike sellerKeyHash — is never
- * re-derived on-chain: the caller must supply the already-hashed value directly. */
-export function roleKeyHash(sk: Uint8Array, domain: string): Uint8Array {
-  const domainBytes = Buffer.alloc(32);
-  Buffer.from(domain, 'utf8').copy(domainBytes);
-  const rtType = new CompactTypeVector(2, new CompactTypeBytes(32));
-  return persistentHash(rtType, [domainBytes, Buffer.from(sk)]);
 }
 
 // Same seed midnight-local-dev's genesis wallet uses — pre-funded with real shielded NIGHT
@@ -109,39 +96,4 @@ export async function shieldFundsFromGenesis(network: UndeployedNetworkConfig, a
   await genesisWallet.stop();
 }
 
-/** The contract-scoped zswapState's `first_free` field stays 0 even long after a real coin
- * has landed (confirmed by direct inspection — see AGENTS.md 5.23: this looks like stale
- * metadata specific to the filtered/serialized snapshot, not a real "empty tree" signal).
- * midnight-js-contracts' own claimPayout/releaseOnTimeout call path hits the exact same field
- * via queryZSwapAndContractState, so mt_index=firstFree-1 fails there too ("invalid index into
- * sparse merkle tree"). The coin's REAL index is visible directly in the sparse tree's
- * toString(true) dump — e.g. `46: (<commitment>, Some(ContractAddress(<our address>)))` — so
- * this greps that dump for the entry whose ContractAddress matches ours. */
-export async function findContractCoinMtIndex(indexerUrl: string, contractAddress: string): Promise<bigint | null> {
-  const res = await fetch(indexerUrl, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      query: `query($address: HexEncoded!) { contractAction(address: $address) { zswapState } }`,
-      variables: { address: contractAddress },
-    }),
-  });
-  const payload = (await res.json()) as any;
-  const zswapStateHex: string | undefined = payload?.data?.contractAction?.zswapState;
-  if (!zswapStateHex) return null;
-  const state = ZswapChainState.deserialize(hexToBytes(zswapStateHex));
-  const dump = state.toString(true);
-  const pattern = new RegExp(`(\\d+): \\([0-9a-f]+, Some\\(ContractAddress\\(${contractAddress}\\)\\)\\)`);
-  const match = dump.match(pattern);
-  return match ? BigInt(match[1]) : null;
-}
-
-/** Polls findContractCoinMtIndex until the indexer has caught up with a just-landed deposit. */
-export async function waitForContractCoinMtIndex(indexerUrl: string, contractAddress: string, maxAttempts = 30): Promise<bigint> {
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const mtIndex = await findContractCoinMtIndex(indexerUrl, contractAddress);
-    if (mtIndex !== null) return mtIndex;
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-  }
-  throw new Error('Could not find the deposited coin in the indexed zswap state.');
-}
+export { findContractCoinMtIndex, waitForContractCoinMtIndex } from '../../src/contract/mtIndex.js';
