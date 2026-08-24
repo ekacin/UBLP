@@ -15,7 +15,7 @@ import pino, { type Logger } from 'pino';
 import { WebSocket } from 'ws';
 import { ZswapSecretKeys, DustSecretKey, LedgerParameters } from '@midnight-ntwrk/midnight-js-protocol/ledger';
 import { FluentWalletBuilder, MidnightWalletProvider, type DustWalletOptions } from '@midnight-ntwrk/testkit-js';
-import type { WalletFacade } from '@midnight-ntwrk/wallet-sdk';
+import type { WalletFacade, UnshieldedKeystore } from '@midnight-ntwrk/wallet-sdk';
 import { loadOrCreateEncryptedSecret } from '@ublp/shared';
 import type { NetworkConfig } from './networks.js';
 
@@ -74,6 +74,8 @@ export interface AgentWallet {
   midnightWalletProvider: MidnightWalletProvider;
   shieldedSecretKeys: ZswapSecretKeys;
   dustSecretKey: DustSecretKey;
+  /** Signs unshielded-NIGHT transfers and DUST-generation registrations (see fundUnshieldedAndRegisterDust). */
+  unshieldedKeystore: UnshieldedKeystore;
 }
 
 /**
@@ -91,7 +93,7 @@ export async function buildAgentWallet(
 ): Promise<AgentWallet> {
   const mnemonic = loadAgentMnemonic(role, passphrase);
 
-  const { wallet, seeds, keystore } = await FluentWalletBuilder.forEnvironment(network.envConfig())
+  const { wallet, seeds, keystore: unshieldedKeystore } = await FluentWalletBuilder.forEnvironment(network.envConfig())
     .withDustOptions(DUST_OPTIONS)
     .withMnemonic(mnemonic)
     .buildWithoutStarting();
@@ -110,10 +112,10 @@ export async function buildAgentWallet(
     wallet,
     shieldedSecretKeys,
     dustSecretKey,
-    keystore
+    unshieldedKeystore
   );
 
-  return { role, wallet, midnightWalletProvider, shieldedSecretKeys, dustSecretKey };
+  return { role, wallet, midnightWalletProvider, shieldedSecretKeys, dustSecretKey, unshieldedKeystore };
 }
 
 export async function closeAgentWallet(agent: AgentWallet): Promise<void> {
