@@ -7,7 +7,7 @@
 
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { openTransactionLog } from '@ublp/shared';
+import { openTransactionLog, isUBLPDid, type UBLPDid } from '@ublp/shared';
 import { createAgentServer, startAgentServer } from '@ublp/shared';
 import { buildAgentWallet, type AgentRole } from '../deploy/wallet.js';
 import { buildEscrowProviders } from '../deploy/providers.js';
@@ -23,6 +23,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export interface SettlementAgentConfig {
   role: AgentRole;
+  /** This company's own DID, e.g. `did:ublp:buyer:acme-import` — a human-chosen label, not
+   * derived from any key, so it has to be operator-configured. Used by acceptEscrow (see
+   * actions.ts's lockDeal) to check an incoming EscrowProposal was actually addressed to
+   * this company, not some other buyer's offer. */
+  did: UBLPDid;
   /** Only `undeployed` (local devnet) is wired up today — see deploy/networks.ts. Passing a
    * pre-built NetworkConfig keeps this ready for preview/preprod without changing this file. */
   network?: NetworkConfig;
@@ -36,9 +41,13 @@ export interface SettlementAgentConfig {
    * .devnet-secrets/data conventions. */
   secretsDir?: string;
   dataDir?: string;
+  /** Defaults to 60s (watcher.ts). Overridable mainly for tests — a real deployment has no
+   * reason to poll faster than once a minute. */
+  watcherIntervalMs?: number;
 }
 
 export async function startSettlementAgent(config: SettlementAgentConfig): Promise<{ stop: () => Promise<void> }> {
+  if (!isUBLPDid(config.did)) throw new Error('config.did must be a valid did:ublp:... identifier.');
   const network = config.network ?? new UndeployedNetworkConfig();
   const secretsDir = config.secretsDir ?? path.join(__dirname, '..', '..', '.settlement-secrets');
   const dataDir = config.dataDir ?? path.join(__dirname, '..', '..', 'data');
@@ -50,7 +59,7 @@ export async function startSettlementAgent(config: SettlementAgentConfig): Promi
   const db = openSettlementDb(path.join(dataDir, 'settlement-agent.db'));
   const txLog = openTransactionLog(path.join(dataDir, 'transactions.db'));
 
-  const ctx: AgentContext = { role: config.role, network, wallet, providers, identity, db, txLog };
+  const ctx: AgentContext = { role: config.role, did: config.did, network, wallet, providers, identity, db, txLog };
   const auth = new AuthStore(identity.loginKeyPair.publicKey);
   const sweepInterval = setInterval(() => auth.sweepExpired(), 60_000);
 
@@ -58,7 +67,7 @@ export async function startSettlementAgent(config: SettlementAgentConfig): Promi
   registerSettlementRoutes(app, ctx, auth);
   await startAgentServer(app, { port: config.port });
 
-  const watcher = startDealWatcher(ctx);
+  const watcher = startDealWatcher(ctx, config.watcherIntervalMs);
 
   return {
     stop: async () => {

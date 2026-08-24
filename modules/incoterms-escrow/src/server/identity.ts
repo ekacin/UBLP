@@ -32,10 +32,19 @@ export interface SettlementIdentity {
   roleSecretKeyHex: string | null;
   /** AGENTS.md 5.18 — X25519 keypair for the dual-recipient encrypted memo. */
   memoKeyPair: X25519KeyPair;
-  /** AGENTS.md 5.26 — P-256 keypair behind the wallet-signature challenge-response login.
-   *  Deliberately the SAME key type `escrow.ts`'s proposeEscrow/verifyProposal already uses
-   *  for signing EscrowTerms, not a new identity concept. */
+  /** AGENTS.md 5.26 — P-256 keypair behind the wallet-signature challenge-response login
+   * (proves "whoever holds this key is authorized to operate this agent"). */
   loginKeyPair: LoginKeyPair;
+  /**
+   * P-256 keypair behind `escrow.ts`'s `proposeEscrow`/`verifyProposal` — proves "this
+   * company's agent really signed off on these exact deal terms" (Section 5.12). Same key
+   * *type* as loginKeyPair but a deliberately separate *instance*, for the same reason
+   * roleKeyHash uses a domain separator per purpose (AGENTS.md's "never reuse a key across
+   * domains" principle) — a login session proves operator access, not non-repudiable
+   * agreement to specific business terms; conflating the two would let a valid login
+   * signature potentially double as (or be confused for) a terms signature.
+   */
+  dealSigningKeyPair: LoginKeyPair;
 }
 
 function randomHex32(): string {
@@ -72,5 +81,11 @@ export function loadOrCreateSettlementIdentity(
     generateKeyPair
   );
 
-  return { roleSecretKeyHex, memoKeyPair, loginKeyPair };
+  const dealSigningKeyPair = loadOrCreateKeyPairJson<LoginKeyPair>(
+    path.join(secretsDir, `${role}-deal-signing-key.json`),
+    passphrase,
+    generateKeyPair
+  );
+
+  return { roleSecretKeyHex, memoKeyPair, loginKeyPair, dealSigningKeyPair };
 }

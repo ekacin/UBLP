@@ -23,7 +23,7 @@ import {
   shieldedToken,
   encodeShieldedCoinInfo,
 } from '@midnight-ntwrk/midnight-js-protocol/ledger';
-import { openTransactionLog, logTransaction, type TransactionLogDb } from '@ublp/shared';
+import { openTransactionLog, logTransaction, isUBLPDid, type TransactionLogDb, type UBLPDid } from '@ublp/shared';
 import { ledger, TimeoutDirection } from '../../contracts/managed/escrow/contract/index.js';
 import {
   compiledEscrowContract,
@@ -39,6 +39,7 @@ import type { AgentWallet, AgentRole } from '../deploy/wallet.js';
 import { buildEscrowProviders } from '../deploy/providers.js';
 import type { NetworkConfig } from '../deploy/networks.js';
 import type { SettlementIdentity } from './identity.js';
+import { proposeEscrow, acceptEscrow, type EscrowTerms, type EscrowProposal } from '../escrow.js';
 import {
   type SettlementDb,
   getCachedMtIndex,
@@ -49,6 +50,11 @@ import {
 
 export interface AgentContext {
   role: AgentRole;
+  /** This company's own DID, e.g. `did:ublp:buyer:acme-import` — operator-configured at boot
+   * (a human-chosen label, not something derivable from a key). Needed so lockDeal can check
+   * an incoming EscrowProposal was actually addressed to THIS company (acceptEscrow), not
+   * some other buyer's offer replayed or misdirected here. */
+  did: UBLPDid;
   network: NetworkConfig;
   wallet: AgentWallet;
   providers: ReturnType<typeof buildEscrowProviders>;
@@ -89,30 +95,48 @@ async function resolveMtIndex(ctx: AgentContext, contractAddress: string, coinDe
 
 const DEFAULT_DURATION_SECONDS = 7 * 24 * 60 * 60; // AGENTS.md 7.2's suggested default (7 days)
 
-export interface ProposeParams {
-  portAuthorityKeyHashHex: string; // C's roleKeyHash, shared during off-chain negotiation
-  /** AGENTS.md 5.29's fix — the LENGTH of the safety window, not an absolute timestamp. The
-   * absolute deadline is now fixed at lockEscrow time (see LockParams), so it always starts
-   * from the real moment funds are locked, not from whenever propose() happened to be called.
-   * Optional, defaults to 7 days (AGENTS.md 7.2's suggested default). */
-  durationSeconds?: number;
-  /** AGENTS.md 5.19/5.20 — a per-deal negotiated term, not a protocol constant. Optional here
-   * because the documented default is 'buyer' ("seçilebilir ama varsayılan buyer") — callers
-   * who don't want to think about it get the suggested default; callers who negotiated
-   * something else can still override it explicitly. */
-  timeoutDirection?: 'buyer' | 'seller';
+/**
+ * Business terms the seller's operator provides. Two fields notably NOT here:
+ * `amountSalt` (generated fresh, server-side — never client input, see proposeDeal) and
+ * `sellerMemoPublicKey` (derived from this agent's own identity, not asked for).
+ * `portAuthorityKeyHashHex`/`buyerMemoPublicKeyHex` ARE still loose inputs — that's fine,
+ * they're public commitments C/buyer made themselves (like exchanging public keys), tampering
+ * with them in transit is self-defeating (breaks a hash-check or breaks buyer's own memo
+ * decryption), not exploitable the way an unsigned amount/salt would be.
+ */
+export interface ProposeDealParams {
+  shipmentId: string;
+  buyerDid: string;
+  portAuthorityDid: string;
+  portAuthorityKeyHashHex: string;
+  buyerMemoPublicKeyHex: string;
+  incoterm: EscrowTerms['incoterm'];
   agreedAmount: string; // integer string, smallest unit
-  buyerMemoPublicKeyHex: string; // buyer's X25519 public key, from the negotiated terms
+  durationSeconds?: number;
+  timeoutDirection?: 'buyer' | 'seller';
 }
 
-export interface ProposeResult {
+export interface ProposeDealResult {
   contractAddress: string;
   txId: string;
+  /**
+   * The signed, portable offer (AGENTS.md 5.12/5.30's fix) — hand this whole blob to the
+   * buyer via whatever out-of-band channel the two companies already use (email, EDI,
+   * whatever). Unlike loose hex fields, this is self-verifying: buyer's lockDeal calls
+   * acceptEscrow() on it before touching the chain, so a channel that tampers with (or
+   * forges) the terms is caught, not silently trusted. See the "two separate companies on
+   * two separate networks" constraint this was built against — nothing here assumes the
+   * seller and buyer agents can reach each other directly.
+   */
+  proposal: EscrowProposal;
 }
 
-export async function proposeDeal(ctx: AgentContext, params: ProposeParams): Promise<ProposeResult> {
+export async function proposeDeal(ctx: AgentContext, params: ProposeDealParams): Promise<ProposeDealResult> {
   if (ctx.role !== 'seller') throw new Error('propose() is only callable by the seller role.');
   if (!ctx.identity.roleSecretKeyHex) throw new Error('Seller identity is missing its role secret key.');
+  if (!isUBLPDid(params.buyerDid) || !isUBLPDid(params.portAuthorityDid)) {
+    throw new Error('buyerDid/portAuthorityDid must be valid did:ublp:... identifiers.');
+  }
 
   const deployed = await deployContract(ctx.providers, {
     compiledContract: compiledEscrowContract,
@@ -122,7 +146,30 @@ export async function proposeDeal(ctx: AgentContext, params: ProposeParams): Pro
   const contractAddress = deployed.deployTxData.public.contractAddress;
 
   const sellerAddressSalt = randomBytes32();
-  const agreedAmountSalt = randomBytes32();
+  const amountSaltBytes = randomBytes32();
+  const durationSeconds = params.durationSeconds ?? DEFAULT_DURATION_SECONDS;
+  const timeoutDirection = params.timeoutDirection ?? 'buyer';
+
+  const terms: EscrowTerms = {
+    shipmentId: `shp:${params.shipmentId}`,
+    sellerDid: ctx.did,
+    buyerDid: params.buyerDid,
+    portAuthorityDid: params.portAuthorityDid,
+    portAuthorityKeyHashHex: params.portAuthorityKeyHashHex,
+    incoterm: params.incoterm,
+    amount: params.agreedAmount,
+    amountSalt: Buffer.from(amountSaltBytes).toString('hex'),
+    durationSeconds,
+    timeoutDirection,
+    sellerMemoPublicKey: ctx.identity.memoKeyPair.publicKey,
+    buyerMemoPublicKey: params.buyerMemoPublicKeyHex,
+  };
+  // The actual security fix: seller signs the exact terms it's about to submit on-chain, with
+  // a key dedicated to this purpose (identity.ts's dealSigningKeyPair, separate from login).
+  // A channel that alters anything in `terms` in transit invalidates this signature — buyer's
+  // lockDeal checks it before ever deriving witness data from it.
+  const proposal = proposeEscrow(terms, ctx.identity.dealSigningKeyPair.privateKey, ctx.identity.dealSigningKeyPair.publicKey);
+
   const privateState: EscrowPrivateState = {
     ...emptyEscrowPrivateState,
     sellerSecretKey: hexToBytes(ctx.identity.roleSecretKeyHex),
@@ -131,13 +178,11 @@ export async function proposeDeal(ctx: AgentContext, params: ProposeParams): Pro
     ownMemoPrivateKey: hexToBytes(ctx.identity.memoKeyPair.privateKey),
     counterpartyMemoPublicKey: hexToBytes(params.buyerMemoPublicKeyHex),
     agreedAmount: BigInt(params.agreedAmount),
-    agreedAmountSalt,
+    agreedAmountSalt: amountSaltBytes,
   };
   await ctx.providers.privateStateProvider.set(EscrowPrivateStateId, privateState);
   saveDealPrivateState(ctx.db, contractAddress, privateState);
 
-  const timeoutDirection = params.timeoutDirection ?? 'buyer';
-  const durationSeconds = params.durationSeconds ?? DEFAULT_DURATION_SECONDS;
   const result = await deployed.callTx.propose(
     hexToBytes(params.portAuthorityKeyHashHex),
     BigInt(durationSeconds),
@@ -148,24 +193,36 @@ export async function proposeDeal(ctx: AgentContext, params: ProposeParams): Pro
     amount: params.agreedAmount,
     currency: 'NIGHT',
     txId: result.public.txId,
-    metadata: { durationSeconds, timeoutDirection },
+    metadata: { durationSeconds, timeoutDirection, buyerDid: params.buyerDid },
   });
 
-  return { contractAddress, txId: result.public.txId };
+  return { contractAddress, txId: result.public.txId, proposal };
 }
 
 // ---- lockEscrow (buyer only) ----
 
-export interface LockParams {
+export interface LockDealParams {
   contractAddress: string;
-  agreedAmount: string;
-  sellerMemoPublicKeyHex: string; // seller's X25519 public key, from the negotiated terms
+  /** The exact signed offer the seller handed over (ProposeDealResult.proposal) — not loose
+   * fields. See lockDeal: this gets cryptographically verified before anything else happens. */
+  proposal: EscrowProposal;
 }
 
-export async function lockDeal(ctx: AgentContext, params: LockParams): Promise<{ txId: string }> {
+export async function lockDeal(ctx: AgentContext, params: LockDealParams): Promise<{ txId: string }> {
   if (ctx.role !== 'buyer') throw new Error('lockEscrow() is only callable by the buyer role.');
 
-  const amount = BigInt(params.agreedAmount);
+  // The actual security boundary (this is *why* ProposeDealResult hands back a signed blob
+  // instead of loose hex fields): acceptEscrow verifies the seller's signature over the exact
+  // terms AND that they're addressed to this buyer's own DID. A channel that tampered with the
+  // amount/salt/memo keys in transit — or handed this buyer an offer meant for someone else —
+  // is rejected right here, before any witness data is derived or the chain is ever touched.
+  // This is deliberately checked assuming seller and buyer are two unrelated agents on two
+  // unrelated networks with no shared trust beyond this signature — not "we're both on the
+  // same machine so I can just trust the data".
+  acceptEscrow(params.proposal, ctx.did);
+  const terms = params.proposal.terms;
+
+  const amount = BigInt(terms.amount);
   const depositSalt = randomBytes32();
   const buyerAddressSalt = randomBytes32();
   const depositedCoinSdk = createShieldedCoinInfo(shieldedToken().raw, amount);
@@ -173,9 +230,8 @@ export async function lockDeal(ctx: AgentContext, params: LockParams): Promise<{
   // encodeShieldedCoinInfo's declared return type doesn't match its actual runtime shape here.
   const depositedCoinEncoded = encodeShieldedCoinInfo(depositedCoinSdk) as any;
 
-  const previous = loadDealPrivateState(ctx.db, params.contractAddress) ?? emptyEscrowPrivateState;
   const privateState: EscrowPrivateState = {
-    ...previous,
+    ...emptyEscrowPrivateState,
     depositedCoin: {
       nonce: hexToBytes(depositedCoinEncoded.nonce ?? depositedCoinSdk.nonce),
       color: hexToBytes(depositedCoinEncoded.color),
@@ -185,26 +241,42 @@ export async function lockDeal(ctx: AgentContext, params: LockParams): Promise<{
     buyerAddress: zswapRecipient(hexToBytes(ctx.wallet.midnightWalletProvider.getCoinPublicKey())),
     buyerAddressSalt,
     ownMemoPrivateKey: hexToBytes(ctx.identity.memoKeyPair.privateKey),
-    counterpartyMemoPublicKey: hexToBytes(params.sellerMemoPublicKeyHex),
+    counterpartyMemoPublicKey: hexToBytes(terms.sellerMemoPublicKey),
     agreedAmount: amount,
+    agreedAmountSalt: hexToBytes(terms.amountSalt),
   };
 
+  // Two real, opposing constraints found via live E2E runs (2026-08-21), both against this
+  // buyer provider's very first-ever contract interaction (nothing has called
+  // deployContract/findDeployedContract on it before this point in the buyer agent's life):
+  //   1. privateStateProvider.set() throws "Contract address not set" if called before
+  //      findDeployedContract has ever run against this contract address on this provider —
+  //      so findDeployedContract must go FIRST here (unlike claimDeal/releaseTimeoutDeal,
+  //      where the seller/buyer's own earlier propose()/lockEscrow() call already established
+  //      the address on that same provider, so .set() first works fine there).
+  //   2. findDeployedContract appears to process — and mutate in place — the object passed as
+  //      initialPrivateState, coercing bigint fields (depositedCoin.value, agreedAmount) into
+  //      plain decimal strings. Passing our real privateState there and saving it afterward
+  //      silently persisted the corrupted strings, which broke a type-checked circuit arg
+  //      (heldCoinForRelease) days later when releaseTimeoutDeal read them back.
+  // Resolution: hand findDeployedContract a disposable clone (mutate that one, we don't care),
+  // keep persisting the untouched original.
   const contract = await findDeployedContract(ctx.providers, {
     contractAddress: params.contractAddress,
     compiledContract: compiledEscrowContract,
     privateStateId: EscrowPrivateStateId,
-    initialPrivateState: privateState,
+    initialPrivateState: structuredClone(privateState),
   });
   await ctx.providers.privateStateProvider.set(EscrowPrivateStateId, privateState);
   saveDealPrivateState(ctx.db, params.contractAddress, privateState);
 
   // Escrow.compact anchors deadlineTimestamp to this value (bounded-checked against real
   // block time via blockTimeGte/blockTimeLte, tolerance 300s) rather than to whenever
-  // propose() happened — see AGENTS.md 5.29 and the contract's lockEscrow() comment.
+  // propose() happened — see AGENTS.md 5.30 and the contract's lockEscrow() comment.
   const claimedLockTime = BigInt(Math.floor(Date.now() / 1000));
   const result = await contract.callTx.lockEscrow(claimedLockTime);
   logAction(ctx, params.contractAddress, 'lockEscrow', {
-    amount: params.agreedAmount,
+    amount: terms.amount,
     currency: 'NIGHT',
     txId: result.public.txId,
   });

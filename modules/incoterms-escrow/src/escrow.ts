@@ -21,6 +21,15 @@ export interface EscrowTerms {
   buyerDid: UBLPDid;
   /** "C" — Section 5.12, the shipment-specific loading-confirmation authority. */
   portAuthorityDid: UBLPDid;
+  /**
+   * The actual on-chain-checkable value (Escrow.compact's `roleKeyHash(portAuthoritySecretKey,
+   * ...)`) — `portAuthorityDid` alone is a human-readable label, not something the circuit can
+   * check. C's own agent computes and publishes this (GET /identity/port-authority-key-hash);
+   * whoever is collecting terms (the seller) must already have it before building `terms`, the
+   * same as the two memo public keys below — no signature needed for this one either, since
+   * it's already a one-way public commitment C made themselves.
+   */
+  portAuthorityKeyHashHex: string;
   /** Section 5.16 — insurance-responsible party; may be left unset for rules that don't require it (FOB). */
   insuranceResponsibleParty?: UBLPDid;
   incoterm: IncotermRule;
@@ -34,9 +43,12 @@ export interface EscrowTerms {
    * terms it verified before accepting.
    */
   amountSalt: string;
-  /** Section 7.2 — if point (c) isn't confirmed / a dispute drags on past this time, the
-   * auto-release timeout fires (7 days, unix seconds). */
-  deadlineTimestamp: number;
+  /** AGENTS.md 5.30 — the LENGTH of the safety window (7 days default), not an absolute
+   * timestamp. The absolute deadline is fixed on-chain at lockEscrow time (anchored to real
+   * block time, bounded-checked via blockTimeGte/blockTimeLte), not at propose time — see
+   * Escrow.compact's lockEscrow() comment for why an absolute deadline set here would be
+   * exploitable (a buyer-controlled "now" could shrink C's real attestation window). */
+  durationSeconds: number;
   /**
    * Section 5.19 — who `releaseOnTimeout` pays if the deadline passes with no attestation
    * from C. No universally "correct" default exists (either direction leaves someone exposed

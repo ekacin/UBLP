@@ -30,6 +30,7 @@ describe('loadOrCreateSettlementIdentity', () => {
     expect(second.roleSecretKeyHex).toBe(first.roleSecretKeyHex);
     expect(second.memoKeyPair).toEqual(first.memoKeyPair);
     expect(second.loginKeyPair).toEqual(first.loginKeyPair);
+    expect(second.dealSigningKeyPair).toEqual(first.dealSigningKeyPair);
   });
 
   it('fails to decrypt persisted identity with the wrong passphrase', () => {
@@ -49,5 +50,13 @@ describe('loadOrCreateSettlementIdentity', () => {
     const { loginKeyPair } = loadOrCreateSettlementIdentity(secretsDir, 'seller', 'pw');
     expect(loginKeyPair.privateKey).toContain('BEGIN PRIVATE KEY');
     expect(loginKeyPair.publicKey).toContain('BEGIN PUBLIC KEY');
+  });
+
+  it('keeps the deal-signing keypair distinct from the login keypair — different purposes, never the same key', () => {
+    const { loginKeyPair, dealSigningKeyPair } = loadOrCreateSettlementIdentity(secretsDir, 'seller', 'pw');
+    expect(dealSigningKeyPair.privateKey).toContain('BEGIN PRIVATE KEY');
+    expect(dealSigningKeyPair.publicKey).toContain('BEGIN PUBLIC KEY');
+    expect(dealSigningKeyPair.privateKey).not.toBe(loginKeyPair.privateKey);
+    expect(dealSigningKeyPair.publicKey).not.toBe(loginKeyPair.publicKey);
   });
 });

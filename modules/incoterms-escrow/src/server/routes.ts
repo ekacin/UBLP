@@ -23,8 +23,8 @@ import {
 } from './db.js';
 import {
   type AgentContext,
-  type ProposeParams,
-  type LockParams,
+  type ProposeDealParams,
+  type LockDealParams,
   proposeDeal,
   lockDeal,
   attestDeal,
@@ -52,13 +52,28 @@ export function registerSettlementRoutes(app: FastifyInstance, ctx: AgentContext
     }
   });
 
-  // ---- pure off-chain helper: derive C's roleKeyHash to publish during negotiation ----
-  app.post<{ Body: { portAuthoritySecretKeyHex: string } }>('/identity/port-authority-key-hash', async (req) => {
-    return { portAuthorityKeyHashHex: computePortAuthorityKeyHash(req.body.portAuthoritySecretKeyHex) };
+  // ---- pure off-chain helper: derive C's own roleKeyHash to publish during negotiation.
+  // Reads ctx.identity.roleSecretKeyHex directly (already decrypted, in-process) — the raw
+  // secret key must never be accepted as a request parameter, even over localhost, the same
+  // witness-never-leaves-the-trust-boundary rule as everywhere else in this codebase. ----
+  app.get('/identity/port-authority-key-hash', async (_req, reply) => {
+    if (ctx.role !== 'port-authority' || !ctx.identity.roleSecretKeyHex) {
+      return reply.code(400).send({ error: 'this agent has no port-authority role key' });
+    }
+    return { portAuthorityKeyHashHex: computePortAuthorityKeyHash(ctx.identity.roleSecretKeyHex) };
+  });
+
+  // ---- this agent's own X25519 memo public key — a real public key, safe to hand out; the
+  // counterparty needs it to fill in buyerMemoPublicKeyHex/sellerMemoPublicKeyHex when
+  // negotiating terms (AGENTS.md 5.18). No such endpoint existed before this agent's first
+  // real end-to-end test — every ProposeParams/LockParams caller had no way to actually learn
+  // the counterparty's key otherwise. ----
+  app.get('/identity/memo-public-key', async () => {
+    return { memoPublicKeyHex: ctx.identity.memoKeyPair.publicKey };
   });
 
   // ---- propose (seller) — queued for approval ----
-  app.post<{ Body: ProposeParams }>('/deals/propose', async (req, reply) => {
+  app.post<{ Body: ProposeDealParams }>('/deals/propose', async (req, reply) => {
     // No dealRef/contractAddress exists yet (propose() deploys a *new* contract), so there's
     // nothing to run findInFlightAction against — every propose() is an independent new deal.
     const pending = createPendingAction(ctx.db, {
@@ -71,7 +86,7 @@ export function registerSettlementRoutes(app: FastifyInstance, ctx: AgentContext
   });
 
   // ---- lockEscrow (buyer) — queued for approval, refuses a redundant resubmit ----
-  app.post<{ Body: LockParams }>('/deals/lock', async (req, reply) => {
+  app.post<{ Body: LockDealParams }>('/deals/lock', async (req, reply) => {
     const inFlight = findInFlightAction(ctx.db, req.body.contractAddress, 'lockEscrow');
     if (inFlight) {
       return reply.code(409).send({ error: 'already_in_flight', pendingActionId: inFlight.id });
@@ -97,9 +112,9 @@ export function registerSettlementRoutes(app: FastifyInstance, ctx: AgentContext
     try {
       const result =
         pending.action === 'propose'
-          ? await proposeDeal(ctx, pending.payload as unknown as ProposeParams)
+          ? await proposeDeal(ctx, pending.payload as unknown as ProposeDealParams)
           : pending.action === 'lockEscrow'
-            ? await lockDeal(ctx, pending.payload as unknown as LockParams)
+            ? await lockDeal(ctx, pending.payload as unknown as LockDealParams)
             : (() => {
                 throw new Error(`Unsupported pending action: ${pending.action}`);
               })();
