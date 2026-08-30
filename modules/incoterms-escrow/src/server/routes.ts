@@ -110,16 +110,24 @@ export function registerSettlementRoutes(app: FastifyInstance, ctx: AgentContext
 
     updatePendingActionStatus(ctx.db, id, 'submitted_pending');
     try {
-      const result =
-        pending.action === 'propose'
-          ? await proposeDeal(ctx, pending.payload as unknown as ProposeDealParams)
-          : pending.action === 'lockEscrow'
-            ? await lockDeal(ctx, pending.payload as unknown as LockDealParams)
-            : (() => {
-                throw new Error(`Unsupported pending action: ${pending.action}`);
-              })();
-      updatePendingActionStatus(ctx.db, id, 'confirmed', result.txId);
-      return { ...pending, ...result, status: 'confirmed' as const };
+      // For 'propose', the result's contractAddress is the deal's real, permanent identity —
+      // the pending row's dealRef started as a placeholder (no contract existed yet); pass it
+      // through to updatePendingActionStatus so later lookups by contract address find this
+      // action too (see db.ts). Branching on pending.action (already known) rather than an
+      // `in` check on the result's inferred union keeps this a plain, TS-narrowable if/else.
+      let result: { txId: string; contractAddress?: string; proposal?: unknown };
+      let realDealRef: string | undefined;
+      if (pending.action === 'propose') {
+        const proposeResult = await proposeDeal(ctx, pending.payload as unknown as ProposeDealParams);
+        result = proposeResult;
+        realDealRef = proposeResult.contractAddress;
+      } else if (pending.action === 'lockEscrow') {
+        result = await lockDeal(ctx, pending.payload as unknown as LockDealParams);
+      } else {
+        throw new Error(`Unsupported pending action: ${pending.action}`);
+      }
+      updatePendingActionStatus(ctx.db, id, 'confirmed', result.txId, realDealRef);
+      return { ...pending, ...result, status: 'confirmed' as const, dealRef: realDealRef ?? pending.dealRef };
     } catch (err) {
       updatePendingActionStatus(ctx.db, id, 'failed');
       return reply.code(502).send({ error: 'chain_call_failed', message: (err as Error).message });

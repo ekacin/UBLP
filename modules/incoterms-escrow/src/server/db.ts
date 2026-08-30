@@ -123,14 +123,17 @@ export function updatePendingActionStatus(
   db: SettlementDb,
   id: number,
   status: PendingActionStatus,
-  txId?: string
+  txId?: string,
+  dealRef?: string
 ): void {
-  db.prepare(`UPDATE pending_actions SET status = ?, txId = COALESCE(?, txId), updatedAt = ? WHERE id = ?`).run(
-    status,
-    txId ?? null,
-    Date.now(),
-    id
-  );
+  // dealRef starts as a placeholder ('pending-propose:<timestamp>') for a 'propose' action,
+  // since no contract address exists until it actually deploys — the caller passes the real
+  // address here once proposeDeal() returns one, so later lookups (the pending queue's own
+  // dealRef filter, and any future "which deals is this contract address involved in" query)
+  // find it under its real, permanent identity instead of the placeholder forever.
+  db.prepare(
+    `UPDATE pending_actions SET status = ?, txId = COALESCE(?, txId), dealRef = COALESCE(?, dealRef), updatedAt = ? WHERE id = ?`
+  ).run(status, txId ?? null, dealRef ?? null, Date.now(), id);
 }
 
 export function listPendingActions(db: SettlementDb, dealRef?: string): PendingAction[] {
