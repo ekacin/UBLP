@@ -10,6 +10,7 @@
     "modules/zk-customs/ublp-agent",
     "modules/zk-customs/l2-verifier-mock",
     "modules/zk-customs/customs-broker",
+    "modules/incoterms-escrow/panel",
     "modules/incoterms-escrow"
   ],
   "scripts": {
