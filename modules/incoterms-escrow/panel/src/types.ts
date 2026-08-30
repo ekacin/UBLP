@@ -65,6 +65,9 @@ export interface DealStatus {
   loadingConfirmed: boolean;
   deadlineTimestamp: number;
   timeoutDirection: 'buyer' | 'seller';
+  /** This company's own bookkeeping for this deal — never the chain, which never stores the
+   * amount in plaintext. See server/actions.ts's DealStatus.ownRecord doc comment. */
+  ownRecord: Array<{ action: string; amount: string | null; currency: string | null; timestamp: number }>;
 }
 
 export interface PendingAction {

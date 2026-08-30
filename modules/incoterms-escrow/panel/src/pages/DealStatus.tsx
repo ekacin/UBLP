@@ -71,6 +71,28 @@ const DealStatus: React.FC<DealStatusProps> = ({ contractAddress, onClose }) => 
 
         {lastUpdated && <div className="last-updated">Last updated {new Date(lastUpdated).toLocaleTimeString()}</div>}
       </div>
+
+      {status && status.ownRecord.length > 0 && (
+        <>
+          <h2 className="section-title">Your company's own record</h2>
+          <div className="card">
+            <p className="empty-state" style={{ marginTop: 0 }}>
+              This amount is never written to the chain — only your own agent's bookkeeping knows it. A
+              counterparty sees none of this.
+            </p>
+            <dl className="status-grid">
+              {status.ownRecord.map((entry, i) => (
+                <React.Fragment key={i}>
+                  <dt>{entry.action}</dt>
+                  <dd>
+                    {entry.amount ?? '—'} {entry.currency ?? ''} · {new Date(entry.timestamp).toLocaleString()}
+                  </dd>
+                </React.Fragment>
+              ))}
+            </dl>
+          </div>
+        </>
+      )}
     </div>
   );
 };

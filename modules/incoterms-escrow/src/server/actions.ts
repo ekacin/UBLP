@@ -23,7 +23,14 @@ import {
   shieldedToken,
   encodeShieldedCoinInfo,
 } from '@midnight-ntwrk/midnight-js-protocol/ledger';
-import { openTransactionLog, logTransaction, isUBLPDid, type TransactionLogDb, type UBLPDid } from '@ublp/shared';
+import {
+  openTransactionLog,
+  logTransaction,
+  queryTransactions,
+  isUBLPDid,
+  type TransactionLogDb,
+  type UBLPDid,
+} from '@ublp/shared';
 import { ledger, TimeoutDirection } from '../../contracts/managed/escrow/contract/index.js';
 import {
   compiledEscrowContract,
@@ -409,18 +416,32 @@ export interface DealStatus {
   loadingConfirmed: boolean;
   deadlineTimestamp: number; // unix seconds
   timeoutDirection: 'buyer' | 'seller';
+  /**
+   * This company's OWN bookkeeping for this deal (5.25's transaction log — logAction below),
+   * never the chain. The chain deliberately never stores the amount in plaintext (only
+   * heldCommitment/agreedAmountCommitment, hashes — see Escrow.compact's privacy note); this
+   * is what actually lets the panel show a number at all, and only to the company whose own
+   * agent already knew it (it generated or received it during off-chain negotiation). A
+   * counterparty's agent has its own separate copy of this same log — nothing here is shared
+   * between companies or written anywhere public.
+   */
+  ownRecord: Array<{ action: string; amount: string | null; currency: string | null; timestamp: number }>;
 }
 
 export async function getDealStatus(ctx: AgentContext, contractAddress: string): Promise<DealStatus | null> {
   const raw = await ctx.providers.publicDataProvider.queryContractState(contractAddress);
   if (!raw) return null;
   const state = ledger(raw.data);
+  const ownRecord = queryTransactions(ctx.txLog, { module: 'incoterms-escrow', dealRef: contractAddress }).map(
+    (row) => ({ action: row.action, amount: row.amount, currency: row.currency, timestamp: row.timestamp })
+  );
   return {
     contractAddress,
     state: Number(state.state),
     loadingConfirmed: state.loadingConfirmed,
     deadlineTimestamp: Number(state.deadlineTimestamp),
     timeoutDirection: Number(state.timeoutDirection) === 0 ? 'buyer' : 'seller',
+    ownRecord,
   };
 }
 
