@@ -16,23 +16,36 @@
  * Midnight's own `verifySignature` (@midnight-ntwrk/ledger-v8) rather than a project-specific
  * P-256 scheme.
  *
- * LIVE-VERIFIED (2026-08-30) against a real 1AM extension (window.midnight['1am'], API
- * 4.0.0), connected to 'preview': signData()'s returned `data` was byte-identical to the
- * nonceHex sent in — 1AM adds no domain-prefix of its own — and Midnight's own
- * `verifySignature()` accepted the resulting {signature, verifyingKey} pair in isolation
- * (confirmed outside the HTTP round trip too, so this isn't just "the request didn't error").
- * The full HTTP round trip itself only succeeded once the running settlement-agent process was
- * restarted to pick up this rewrite — worth remembering: this file's logic can be correct while
- * a stale running process still serves the old behavior. verifyChallenge still checks
- * "nonce is a substring of what was signed" rather than exact equality, since a different
- * wallet (Lace, or a future 1AM version) could still add its own prefix — the substring check
- * costs nothing and is the more defensive default.
+ * WHAT WAS ACTUALLY CONFIRMED (2026-08-30), and what wasn't: this file's own verification
+ * logic — the wire format, `bytesContains`, and Midnight's `verifySignature()` — was exercised
+ * against a real signature produced by a real 1AM extension (window.midnight['1am'], API
+ * 4.0.0) and accepted correctly, both inside the full HTTP round trip and re-checked in
+ * isolation outside it. `signData()`'s returned `data` came back byte-identical to the
+ * nonceHex sent in — 1AM adds no domain-prefix of its own, at least in this build.
+ *
+ * What this did NOT confirm: whether that signature came from the user's own real, deliberately
+ * unlocked account. No approval popup was observed anywhere during connect()/signData() — the
+ * user independently confirmed they had not been able to fully activate their own 1AM account
+ * (separately hitting a "Gateway sign-in failed" error from 1AM's backend). The working theory
+ * is that signData() may be answerable from a local/default keypair the extension already holds
+ * without needing that backend-dependent activation step at all — plausible, since Gateway
+ * involvement looks specific to fee sponsorship/proving, not local message signing — but this
+ * is inference, not something directly observed. Until someone can watch a real approval prompt
+ * happen against a fully-activated account, treat the *crypto/wire-format* layer as verified
+ * and the *real end-user approval flow* as still open. verifyChallenge checks "nonce is a
+ * substring of what was signed" rather than exact equality regardless, since a different wallet
+ * (Lace, or a future 1AM version) could still add its own prefix — the substring check costs
+ * nothing and is the more defensive default either way.
+ *
+ * Also worth remembering operationally: the first HTTP round-trip attempt failed even though
+ * this file's logic was already correct, purely because the running settlement-agent process
+ * hadn't been restarted since this rewrite landed — a stale process serves stale behavior no
+ * matter how correct the source on disk is.
  *
  * ALSO OBSERVED — not this file's concern, but relevant context: 1AM's connect() only reliably
- * completed for 'mainnet'-adjacent flows during this session; 'preview' succeeded once then
- * hung on a retry, matching a live "Gateway sign-in failed" error the user was independently
- * seeing from 1AM for any network besides local/main. That's 1AM's own backend availability,
- * not something in this codebase.
+ * completed for 'mainnet' during this session; 'preview' succeeded once then hung on a retry,
+ * matching the user's independently-reported "Gateway sign-in failed" for any network besides
+ * local/main. That's 1AM's own backend availability, not something in this codebase.
  *
  * BOOTSTRAP MODEL (v0.1, single operator, matches the old scope note): the first wallet to
  * complete a valid challenge-response becomes the permanently authorized operator for this

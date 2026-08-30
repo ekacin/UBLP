@@ -3,17 +3,23 @@
  * Replaces the earlier raw-PEM-paste login: the operator connects their own 1AM/Lace wallet
  * extension, its private key never leaves the extension's own isolated context.
  *
- * LIVE-VERIFIED (2026-08-30) against a real 1AM extension: wallet detection, `connect()`, and
- * `signData()` all behave exactly as coded here — `signData`'s returned `data` came back
- * byte-identical to the nonceHex sent in (see server/auth.ts's matching note for the full
- * round-trip result). One real constraint found along the way: `connect(networkId)`'s
- * `networkId` is typed as a plain `string` (no restricted union) and is only a *hint* — 1AM's
- * own connect() reliably completed for 'mainnet' during this session, while 'preview' worked
- * once then started failing with 1AM's own "Gateway sign-in failed" error on retry, and our
- * local devnet's 'undeployed' id was never recognized at all. That's 1AM's own backend/network
- * support, not something this file controls — VITE_NETWORK_ID should be set to whatever network
- * the operator's actual wallet is configured for, not assumed to match this project's devnet
- * convention.
+ * CONFIRMED (2026-08-30) against a real 1AM extension: wallet detection, `connect()`, and
+ * `signData()` all run without throwing and produce a signature server/auth.ts accepts —
+ * `signData`'s returned `data` came back byte-identical to the nonceHex sent in. NOT confirmed:
+ * that this exercised the operator's own real, deliberately-unlocked wallet account rather than
+ * some local/default identity the extension already held — no approval popup was ever observed
+ * during connect()/signData(), and the user separately could not get their own 1AM account past
+ * a backend "Gateway sign-in failed" error at all. See server/auth.ts's header for the fuller
+ * writeup — treat the code path here as proven correct, and the real end-user approval
+ * experience as still unverified until someone can watch it happen on a fully-activated account.
+ *
+ * One real constraint found along the way: `connect(networkId)`'s `networkId` is typed as a
+ * plain `string` (no restricted union) and is only a *hint* — 1AM's own connect() reliably
+ * completed for 'mainnet' during this session, while 'preview' worked once then started failing
+ * with the Gateway error on retry, and our local devnet's 'undeployed' id was never recognized
+ * at all. That's 1AM's own backend/network support, not something this file controls —
+ * VITE_NETWORK_ID should be set to whatever network the operator's actual wallet is configured
+ * for, not assumed to match this project's devnet convention.
  */
 
 import '@midnight-ntwrk/dapp-connector-api';
