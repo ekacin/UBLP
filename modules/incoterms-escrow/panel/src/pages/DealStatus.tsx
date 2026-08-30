@@ -8,6 +8,8 @@ interface DealStatusProps {
   onClose: () => void;
 }
 
+const STATE_BADGE_CLASS = ['badge-rejected', 'badge-awaiting_approval', 'badge-submitted_pending', 'badge-confirmed'];
+
 const DealStatus: React.FC<DealStatusProps> = ({ contractAddress, onClose }) => {
   const [status, setStatus] = useState<DealStatusType | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -36,28 +38,39 @@ const DealStatus: React.FC<DealStatusProps> = ({ contractAddress, onClose }) => 
 
   return (
     <div>
-      <button type="button" onClick={onClose}>
+      <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
         ← Back
       </button>
-      <h2>Deal status</h2>
-      <p>
-        <code>{contractAddress}</code>
-      </p>
-      {error && <p role="alert">{error}</p>}
-      {!status && !error && <p>Loading…</p>}
-      {status && (
-        <dl>
-          <dt>State</dt>
-          <dd>{ESCROW_STATE_LABELS[status.state] ?? status.state}</dd>
-          <dt>Loading confirmed by port authority</dt>
-          <dd>{status.loadingConfirmed ? 'Yes' : 'Not yet'}</dd>
-          <dt>Deadline</dt>
-          <dd>{status.deadlineTimestamp > 0 ? new Date(status.deadlineTimestamp * 1000).toLocaleString() : '(not locked yet)'}</dd>
-          <dt>Timeout pays out to</dt>
-          <dd>{status.timeoutDirection}</dd>
-        </dl>
-      )}
-      {lastUpdated && <p>Last updated: {new Date(lastUpdated).toLocaleTimeString()}</p>}
+      <h2 className="section-title">Deal status</h2>
+      <div className="card">
+        <div className="deal-address">{contractAddress}</div>
+
+        {error && (
+          <div className="alert alert-error" role="alert">
+            {error}
+          </div>
+        )}
+        {!status && !error && <p className="empty-state">Loading…</p>}
+
+        {status && (
+          <dl className="status-grid">
+            <dt>State</dt>
+            <dd>
+              <span className={`badge ${STATE_BADGE_CLASS[status.state] ?? ''}`}>
+                {ESCROW_STATE_LABELS[status.state] ?? status.state}
+              </span>
+            </dd>
+            <dt>Loading confirmed by port authority</dt>
+            <dd>{status.loadingConfirmed ? 'Yes' : 'Not yet'}</dd>
+            <dt>Deadline</dt>
+            <dd>{status.deadlineTimestamp > 0 ? new Date(status.deadlineTimestamp * 1000).toLocaleString() : '(not locked yet)'}</dd>
+            <dt>Timeout pays out to</dt>
+            <dd>{status.timeoutDirection}</dd>
+          </dl>
+        )}
+
+        {lastUpdated && <div className="last-updated">Last updated {new Date(lastUpdated).toLocaleTimeString()}</div>}
+      </div>
     </div>
   );
 };

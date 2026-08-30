@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@noble/curves": "^1.9.7",
+    "@midnight-ntwrk/dapp-connector-api": "^4.0.1",
     "graphql": "^16.14.2",
     "graphql-ws": "^6.2.1",
     "react": "^19.0.0",

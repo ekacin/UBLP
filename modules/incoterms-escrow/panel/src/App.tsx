@@ -5,24 +5,27 @@ import PendingQueue from './pages/PendingQueue';
 import DealStatus from './pages/DealStatus';
 
 const App: React.FC = () => {
-  const { status, error, submitLoginKey, logout } = useAuth();
+  const { status, error, wallets, login, logout } = useAuth();
   const [viewingDeal, setViewingDeal] = useState<string | null>(null);
 
-  if (status === 'checking') return <p>Checking session…</p>;
+  if (status === 'checking') return null;
 
-  if (status === 'unauthenticated') {
-    return <Login error={error} onSubmit={submitLoginKey} />;
+  if (status === 'unauthenticated' || status === 'connecting') {
+    return <Login wallets={wallets} connecting={status === 'connecting'} error={error} onConnect={login} />;
   }
 
   return (
-    <div>
-      <header>
-        <h1>UBLP Settlement Panel</h1>
-        <button type="button" onClick={() => logout(false)}>
+    <div className="app-shell">
+      <header className="app-header">
+        <div className="brand-block">
+          <span className="brand">UBLP</span>
+          <h1>Settlement Panel</h1>
+        </div>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={logout}>
           Sign out
         </button>
       </header>
-      <main>
+      <main className="app-main">
         {viewingDeal ? (
           <DealStatus contractAddress={viewingDeal} onClose={() => setViewingDeal(null)} />
         ) : (
