@@ -32,17 +32,14 @@ export interface SettlementIdentity {
   roleSecretKeyHex: string | null;
   /** AGENTS.md 5.18 — X25519 keypair for the dual-recipient encrypted memo. */
   memoKeyPair: X25519KeyPair;
-  /** AGENTS.md 5.26 — P-256 keypair behind the wallet-signature challenge-response login
-   * (proves "whoever holds this key is authorized to operate this agent"). */
-  loginKeyPair: LoginKeyPair;
   /**
    * P-256 keypair behind `escrow.ts`'s `proposeEscrow`/`verifyProposal` — proves "this
-   * company's agent really signed off on these exact deal terms" (Section 5.12). Same key
-   * *type* as loginKeyPair but a deliberately separate *instance*, for the same reason
-   * roleKeyHash uses a domain separator per purpose (AGENTS.md's "never reuse a key across
-   * domains" principle) — a login session proves operator access, not non-repudiable
-   * agreement to specific business terms; conflating the two would let a valid login
-   * signature potentially double as (or be confused for) a terms signature.
+   * company's agent really signed off on these exact deal terms" (Section 5.12). Deliberately
+   * separate from operator login (AGENTS.md 5.26/auth.ts): login now proves "a real Midnight
+   * wallet, held by a human operator, authorized this session" via the operator's own wallet
+   * extension — a fundamentally different, external identity, not something this agent
+   * generates or holds. Conflating the two would let a login session double as (or be
+   * confused for) non-repudiable agreement to specific business terms.
    */
   dealSigningKeyPair: LoginKeyPair;
 }
@@ -75,17 +72,11 @@ export function loadOrCreateSettlementIdentity(
     generateX25519KeyPair
   );
 
-  const loginKeyPair = loadOrCreateKeyPairJson<LoginKeyPair>(
-    path.join(secretsDir, `${role}-login-key.json`),
-    passphrase,
-    generateKeyPair
-  );
-
   const dealSigningKeyPair = loadOrCreateKeyPairJson<LoginKeyPair>(
     path.join(secretsDir, `${role}-deal-signing-key.json`),
     passphrase,
     generateKeyPair
   );
 
-  return { roleSecretKeyHex, memoKeyPair, loginKeyPair, dealSigningKeyPair };
+  return { roleSecretKeyHex, memoKeyPair, dealSigningKeyPair };
 }

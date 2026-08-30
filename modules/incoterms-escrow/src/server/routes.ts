@@ -38,11 +38,15 @@ export function registerSettlementRoutes(app: FastifyInstance, ctx: AgentContext
   // ---- auth (AGENTS.md 5.26 — wallet-signature challenge-response, no passwords) ----
   app.post('/auth/challenge', async () => auth.issueChallenge());
 
-  app.post<{ Body: { challengeId: string; signature: string } }>('/auth/verify', async (req, reply) => {
-    const result = auth.verifyChallenge(req.body.challengeId, req.body.signature);
-    if (!result) return reply.code(401).send({ error: 'invalid_or_expired_challenge' });
-    return result;
-  });
+  app.post<{ Body: { challengeId: string; signature: string; signedDataHex: string; verifyingKey: string } }>(
+    '/auth/verify',
+    async (req, reply) => {
+      const { challengeId, signature, signedDataHex, verifyingKey } = req.body;
+      const result = auth.verifyChallenge(challengeId, signature, signedDataHex, verifyingKey);
+      if (!result) return reply.code(401).send({ error: 'invalid_or_expired_challenge' });
+      return result;
+    }
+  );
 
   app.addHook('onRequest', async (req, reply) => {
     if (req.url.startsWith('/auth/')) return;

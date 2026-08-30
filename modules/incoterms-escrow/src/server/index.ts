@@ -7,6 +7,7 @@
 
 import path from 'path';
 import { fileURLToPath } from 'url';
+import cors from '@fastify/cors';
 import { openTransactionLog, isUBLPDid, type UBLPDid } from '@ublp/shared';
 import { createAgentServer, startAgentServer } from '@ublp/shared';
 import { buildAgentWallet, type AgentRole } from '../deploy/wallet.js';
@@ -60,10 +61,19 @@ export async function startSettlementAgent(config: SettlementAgentConfig): Promi
   const txLog = openTransactionLog(path.join(dataDir, 'transactions.db'));
 
   const ctx: AgentContext = { role: config.role, did: config.did, network, wallet, providers, identity, db, txLog };
-  const auth = new AuthStore(identity.loginKeyPair.publicKey);
+  const auth = new AuthStore(secretsDir);
   const sweepInterval = setInterval(() => auth.sweepExpired(), 60_000);
 
   const app = createAgentServer({ logger: true });
+  // The panel (AGENTS.md 5.26) is a separate origin (its own Vite dev server or static host)
+  // from this agent's own port, so the browser needs CORS to even read the response — without
+  // it every fetch from the panel fails before ever reaching a route handler (live-tested:
+  // the browser reports "Failed to fetch" and the agent's own request log never shows the
+  // attempt at all). Reflecting any origin is fine here: this agent is self-hosted, one
+  // operator, and the real security boundary is the wallet-signature bearer session
+  // (routes.ts's onRequest hook), not network topology — CORS only gates whether a browser
+  // lets its own JS *read* a response, not whether the request reaches the server.
+  await app.register(cors, { origin: true });
   registerSettlementRoutes(app, ctx, auth);
   await startAgentServer(app, { port: config.port });
 
