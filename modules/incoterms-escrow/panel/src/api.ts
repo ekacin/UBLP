@@ -85,7 +85,13 @@ export function listPending(dealRef?: string): Promise<PendingAction[]> {
   return request(`/deals/pending${qs}`);
 }
 
-export function approvePending(id: number): Promise<PendingAction & { txId?: string }> {
+/** For a 'propose' action, the approve response also carries the seller-signed EscrowProposal
+ * (routes.ts's approve handler spreads `...result` in) — this is NOT persisted anywhere
+ * server-side (see server/db.ts), so this one HTTP response is the only chance to capture it
+ * and hand it to the buyer out-of-band (AGENTS.md 5.12). Miss it here and it's gone. */
+export function approvePending(
+  id: number
+): Promise<PendingAction & { txId?: string; proposal?: EscrowProposal }> {
   return request(`/deals/pending/${id}/approve`, { method: 'POST' });
 }
 

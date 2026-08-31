@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { listPending, approvePending, rejectPending } from '../api';
-import type { PendingAction, PendingActionStatus, ProposeDealParams, LockDealParams } from '../types';
+import type { EscrowProposal, PendingAction, PendingActionStatus, ProposeDealParams, LockDealParams } from '../types';
 
 const POLL_INTERVAL_MS = 5_000;
 
@@ -98,6 +98,10 @@ const PendingQueue: React.FC<PendingQueueProps> = ({ onViewDeal }) => {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
+  // Only ever comes from a live approve response — never persisted server-side, so this is
+  // the one chance to capture it (see api.ts's approvePending doc comment).
+  const [justApproved, setJustApproved] = useState<EscrowProposal | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -117,13 +121,21 @@ const PendingQueue: React.FC<PendingQueueProps> = ({ onViewDeal }) => {
     setBusyId(id); // blocking overlay: the whole queue is disabled while busyId is set
     setLastError(null);
     try {
-      await approvePending(id);
+      const result = await approvePending(id);
+      if (result.proposal) setJustApproved(result.proposal);
       await refresh();
     } catch (err) {
       setLastError((err as Error).message);
     } finally {
       setBusyId(null);
     }
+  };
+
+  const copyOffer = () => {
+    if (!justApproved) return;
+    navigator.clipboard?.writeText(JSON.stringify(justApproved)).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
   };
 
   const handleReject = async (id: number) => {
@@ -156,6 +168,44 @@ const PendingQueue: React.FC<PendingQueueProps> = ({ onViewDeal }) => {
             <div className="spinner" />
             <div className="blocking-title">Submitting to the network</div>
             <div className="blocking-sub">This generates a real ZK proof and can take 30–60 seconds. Don't close this page.</div>
+          </div>
+        </div>
+      )}
+
+      {justApproved && (
+        <div className="card">
+          <div className="queue-item-head">
+            <div className="queue-item-title">Signed offer — send this to your buyer</div>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setJustApproved(null)}>
+              Dismiss
+            </button>
+          </div>
+          <p className="action-note" style={{ marginTop: 8 }}>
+            This is not published anywhere the buyer can already see it — copy it and send it via
+            whatever channel you already use (email, chat, EDI). The buyer pastes it into their own
+            panel's "Lock a received offer" form.
+          </p>
+          <textarea
+            readOnly
+            rows={6}
+            value={JSON.stringify(justApproved, null, 2)}
+            onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+            style={{
+              width: '100%',
+              fontFamily: 'var(--mono)',
+              fontSize: 12,
+              padding: 10,
+              border: '1px solid var(--line)',
+              borderRadius: 8,
+              background: 'var(--soft)',
+              color: 'var(--fg)',
+              resize: 'vertical',
+            }}
+          />
+          <div className="queue-item-actions">
+            <button type="button" className="btn btn-primary btn-sm" onClick={copyOffer}>
+              {copied ? 'Copied' : 'Copy'}
+            </button>
           </div>
         </div>
       )}
