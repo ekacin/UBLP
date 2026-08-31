@@ -28,7 +28,16 @@ if (!passphrase) {
   throw new Error('SETTLEMENT_PASSPHRASE must be set — see AGENTS.md 5.21 on how production should source this.');
 }
 
-const agent = await startSettlementAgent({ role, did, port, passphrase });
+// Optional — only needed when running more than one role's agent from the same checkout
+// (e.g. local multi-agent testing). Left unset, startSettlementAgent falls back to its own
+// single-role-per-checkout defaults (<package root>/.settlement-secrets, <package root>/data);
+// two roles sharing those defaults would collide on the same flat authorized-operator.json and
+// SQLite files (see server/auth.ts, server/db.ts), so a real multi-role-on-one-host deployment
+// must set these to distinct directories per role.
+const secretsDir = process.env.SETTLEMENT_SECRETS_DIR;
+const dataDir = process.env.SETTLEMENT_DATA_DIR;
+
+const agent = await startSettlementAgent({ role, did, port, passphrase, secretsDir, dataDir });
 console.log(`[settlement-agent] role=${role} listening on :${port}`);
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

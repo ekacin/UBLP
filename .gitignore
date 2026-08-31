@@ -15,6 +15,10 @@ dist/
 
 # Transaction audit log (SQLite) — real deal/counterparty data, company-internal only
 **/incoterms-escrow/data/
+# Same, but for local multi-role testing (SETTLEMENT_SECRETS_DIR/SETTLEMENT_DATA_DIR
+# overrides — one dir per role so buyer/seller/port-authority agents don't collide)
+**/incoterms-escrow/data-*/
+**/incoterms-escrow/.settlement-secrets-*/
 
 # Logs
 *.log

@@ -48,8 +48,17 @@ export function registerSettlementRoutes(app: FastifyInstance, ctx: AgentContext
     }
   );
 
+  // These two GETs are deliberately public — see their own handlers below and
+  // fetchCounterpartyIdentity's doc comment in the panel's api.ts: a genuine counterparty (a
+  // different company, with no session on THIS agent) is exactly who is supposed to call them
+  // during negotiation, before either side has anything to authenticate with here. Live-tested
+  // 2026-08-31: a second agent's browser session got a bare {"error":"unauthorized"} from these
+  // until this exemption was added — the blanket hook below was catching them along with
+  // everything else.
+  const PUBLIC_IDENTITY_PATHS = ['/identity/port-authority-key-hash', '/identity/memo-public-key'];
+
   app.addHook('onRequest', async (req, reply) => {
-    if (req.url.startsWith('/auth/')) return;
+    if (req.url.startsWith('/auth/') || PUBLIC_IDENTITY_PATHS.includes(req.url)) return;
     const token = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
     if (!auth.isSessionValid(token)) {
       await reply.code(401).send({ error: 'unauthorized' });
@@ -72,7 +81,11 @@ export function registerSettlementRoutes(app: FastifyInstance, ctx: AgentContext
     if (ctx.role !== 'port-authority' || !ctx.identity.roleSecretKeyHex) {
       return reply.code(400).send({ error: 'this agent has no port-authority role key' });
     }
-    return { portAuthorityKeyHashHex: computePortAuthorityKeyHash(ctx.identity.roleSecretKeyHex) };
+    // `did` rides along here too — the operator building `terms` needs BOTH values, and
+    // typing the DID by hand (must match this agent's real ctx.did, or the counterparty's
+    // later accept/lock check rejects it) is exactly the kind of transcription error this
+    // endpoint already exists to avoid for the hash itself.
+    return { portAuthorityKeyHashHex: computePortAuthorityKeyHash(ctx.identity.roleSecretKeyHex), did: ctx.did };
   });
 
   // ---- this agent's own X25519 memo public key — a real public key, safe to hand out; the
@@ -81,7 +94,7 @@ export function registerSettlementRoutes(app: FastifyInstance, ctx: AgentContext
   // real end-to-end test — every ProposeParams/LockParams caller had no way to actually learn
   // the counterparty's key otherwise. ----
   app.get('/identity/memo-public-key', async () => {
-    return { memoPublicKeyHex: ctx.identity.memoKeyPair.publicKey };
+    return { memoPublicKeyHex: ctx.identity.memoKeyPair.publicKey, did: ctx.did };
   });
 
   // ---- propose (seller) — queued for approval ----

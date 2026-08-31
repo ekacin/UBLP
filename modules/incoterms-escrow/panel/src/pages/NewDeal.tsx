@@ -21,12 +21,13 @@ const emptyProposeForm: ProposeDealParams = {
   timeoutDirection: 'buyer',
 };
 
-/** Small helper for the two identity fields a seller needs from the buyer's / port authority's
- * own agent (AGENTS.md 5.12/5.18) — normally relayed by email/chat as a hex string; this lets
- * an operator fetch it directly from that agent's base URL instead of copy-pasting. */
+/** Small helper for the identity fields a seller needs from the buyer's / port authority's own
+ * agent (AGENTS.md 5.12/5.18) — normally relayed by email/chat as a hex string + a DID typed
+ * by hand; this fetches both directly from that agent's base URL in one click instead, so a
+ * mistyped DID (which later fails the counterparty's own addressed-to-me check) can't happen. */
 const FetchIdentityButton: React.FC<{
   which: 'port-authority-key-hash' | 'memo-public-key';
-  onFetched: (hex: string) => void;
+  onFetched: (hex: string, did: string) => void;
 }> = ({ which, onFetched }) => {
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
@@ -37,7 +38,8 @@ const FetchIdentityButton: React.FC<{
     setBusy(true);
     setError(null);
     try {
-      onFetched(await fetchCounterpartyIdentity(url, which));
+      const { hex, did } = await fetchCounterpartyIdentity(url, which);
+      onFetched(hex, did);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -117,7 +119,13 @@ const ProposeForm: React.FC<{ onCreated: () => void }> = ({ onCreated }) => {
           onChange={(e) => set('portAuthorityKeyHashHex', e.target.value)}
         />
       </label>
-      <FetchIdentityButton which="port-authority-key-hash" onFetched={(hex) => set('portAuthorityKeyHashHex', hex)} />
+      <FetchIdentityButton
+        which="port-authority-key-hash"
+        onFetched={(hex, did) => {
+          set('portAuthorityKeyHashHex', hex);
+          set('portAuthorityDid', did);
+        }}
+      />
 
       <label>
         Buyer's memo public key
@@ -128,7 +136,13 @@ const ProposeForm: React.FC<{ onCreated: () => void }> = ({ onCreated }) => {
           onChange={(e) => set('buyerMemoPublicKeyHex', e.target.value)}
         />
       </label>
-      <FetchIdentityButton which="memo-public-key" onFetched={(hex) => set('buyerMemoPublicKeyHex', hex)} />
+      <FetchIdentityButton
+        which="memo-public-key"
+        onFetched={(hex, did) => {
+          set('buyerMemoPublicKeyHex', hex);
+          set('buyerDid', did);
+        }}
+      />
 
       <label>
         Incoterm

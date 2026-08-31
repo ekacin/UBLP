@@ -115,19 +115,23 @@ export function lockDeal(params: LockDealParams): Promise<PendingAction> {
   return request('/deals/lock', { method: 'POST', body: JSON.stringify(params) });
 }
 
-/** Fetches a counterparty's own public identity value from THEIR agent (a different base URL,
- * a different company, no auth — these are the two intentionally-public identity endpoints,
+/** Fetches a counterparty's own public identity from THEIR agent (a different base URL, a
+ * different company, no auth — these are the two intentionally-public identity endpoints,
  * AGENTS.md 5.12/5.18) — a convenience so an operator doesn't have to copy-paste a hex string
- * by hand from an email/chat. Never used for anything but these two read-only GETs. */
+ * (or, worse, hand-type a DID that has to match that agent's real one exactly) from an
+ * email/chat. Returns the DID alongside the hex — a mistyped DID is exactly the kind of
+ * transcription error this endpoint exists to avoid in the first place, same as the hex
+ * itself. Never used for anything but these two read-only GETs. */
 export async function fetchCounterpartyIdentity(
   agentBaseUrl: string,
   which: 'port-authority-key-hash' | 'memo-public-key'
-): Promise<string> {
+): Promise<{ hex: string; did: string }> {
   const res = await fetch(`${agentBaseUrl.replace(/\/$/, '')}/identity/${which}`);
   const text = await res.text();
   const json = text ? JSON.parse(text) : undefined;
   if (!res.ok) throw new ApiError(res.status, json?.error ?? `${res.status}`);
-  return which === 'port-authority-key-hash' ? json.portAuthorityKeyHashHex : json.memoPublicKeyHex;
+  const hex = which === 'port-authority-key-hash' ? json.portAuthorityKeyHashHex : json.memoPublicKeyHex;
+  return { hex, did: json.did };
 }
 
 // ---- immediate actions, no approval gate (AGENTS.md 5.21 — attest/claim/release-timeout
