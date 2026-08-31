@@ -1,20 +1,26 @@
 import React from 'react';
 import type { InitialAPI } from '@midnight-ntwrk/dapp-connector-api';
+import InstanceSwitcher from '../components/InstanceSwitcher';
 
 interface LoginProps {
   wallets: InitialAPI[];
   connecting: boolean;
   error: string | null;
   onConnect: (wallet: InitialAPI) => void;
+  activeBaseUrl: string;
+  onSwitchInstance: (baseUrl: string) => void;
 }
 
-const Login: React.FC<LoginProps> = ({ wallets, connecting, error, onConnect }) => {
+const Login: React.FC<LoginProps> = ({ wallets, connecting, error, onConnect, activeBaseUrl, onSwitchInstance }) => {
   return (
     <div className="login-screen">
       <div className="login-card">
         <div className="brand">UBLP</div>
-        <h1>Settlement Panel</h1>
+        <h1>Escrow Settlement</h1>
         <p className="subtitle">Sign in with your Midnight wallet to manage this company's deals.</p>
+        <div className="login-instance">
+          <InstanceSwitcher activeBaseUrl={activeBaseUrl} onSwitch={onSwitchInstance} />
+        </div>
 
         {wallets.length === 0 && !connecting && (
           <div className="login-empty">

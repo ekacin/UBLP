@@ -6,6 +6,17 @@
  * sync with the backend by hand if those interfaces change.
  */
 
+export type AgentRole = 'buyer' | 'seller' | 'port-authority';
+
+/** A single deployed agent is always ONE company's fixed identity — never a role the operator
+ * picks in the UI (unlike a generic multi-role demo). The panel fetches this once after login
+ * to render a role-appropriate dashboard (AGENTS.md 5.12/5.26). */
+export interface WhoAmI {
+  role: AgentRole;
+  did: string;
+  network: string;
+}
+
 export type IncotermRule = 'FOB' | string;
 
 export interface EscrowTerms {

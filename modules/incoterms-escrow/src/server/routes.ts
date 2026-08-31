@@ -56,6 +56,14 @@ export function registerSettlementRoutes(app: FastifyInstance, ctx: AgentContext
     }
   });
 
+  // ---- this agent's fixed role (AgentContext.role — set once at boot, never chosen by the
+  // operator in the UI: a single deployed agent is always one company's seller, buyer, or
+  // port-authority identity, never a role picker). The panel needs this to render a role-
+  // appropriate dashboard (e.g. only sellers see "New deal", only port-authority sees attest). ----
+  app.get('/identity/whoami', async () => {
+    return { role: ctx.role, did: ctx.did, network: ctx.network.networkId };
+  });
+
   // ---- pure off-chain helper: derive C's own roleKeyHash to publish during negotiation.
   // Reads ctx.identity.roleSecretKeyHex directly (already decrypted, in-process) — the raw
   // secret key must never be accepted as a request parameter, even over localhost, the same
