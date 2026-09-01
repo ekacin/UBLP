@@ -1,4 +1,12 @@
-import type { DealStatus, EscrowProposal, LockDealParams, PendingAction, ProposeDealParams, WhoAmI } from './types';
+import type {
+  DealStatus,
+  EscrowProposal,
+  IncomingOffer,
+  LockDealParams,
+  PendingAction,
+  ProposeDealParams,
+  WhoAmI,
+} from './types';
 import { getActiveBaseUrl } from './agentInstances';
 
 class ApiError extends Error {
@@ -88,10 +96,13 @@ export function listPending(dealRef?: string): Promise<PendingAction[]> {
 /** For a 'propose' action, the approve response also carries the seller-signed EscrowProposal
  * (routes.ts's approve handler spreads `...result` in) — this is NOT persisted anywhere
  * server-side (see server/db.ts), so this one HTTP response is the only chance to capture it
- * and hand it to the buyer out-of-band (AGENTS.md 5.12). Miss it here and it's gone. */
+ * and hand it to the buyer out-of-band (AGENTS.md 5.12). Miss it here and it's gone.
+ * `delivered` reports whether the backend's best-effort automatic agent-to-agent push
+ * (tryDeliverOfferToBuyer) succeeded — the manual "Signed offer" card still shows regardless,
+ * as the fallback, even when delivery worked. */
 export function approvePending(
   id: number
-): Promise<PendingAction & { txId?: string; proposal?: EscrowProposal }> {
+): Promise<PendingAction & { txId?: string; proposal?: EscrowProposal; delivered?: boolean }> {
   return request(`/deals/pending/${id}/approve`, { method: 'POST' });
 }
 
@@ -152,6 +163,17 @@ export function claimDeal(contractAddress: string): Promise<{ txId: string }> {
 
 export function releaseTimeoutDeal(contractAddress: string): Promise<{ txId: string }> {
   return request(`/deals/${encodeURIComponent(contractAddress)}/release-timeout`, { method: 'POST' });
+}
+
+// ---- agent-to-agent incoming offers (buyer side) — see server/actions.ts's receiveOffer;
+// GET/dismiss are authenticated normal routes, the receiving POST itself is on the
+// counterparty's agent and isn't called from this panel at all. ----
+export function listIncomingOffers(): Promise<IncomingOffer[]> {
+  return request('/deals/incoming');
+}
+
+export function dismissIncomingOffer(id: number): Promise<IncomingOffer> {
+  return request(`/deals/incoming/${id}/dismiss`, { method: 'POST' });
 }
 
 export function parseEscrowProposal(raw: string): EscrowProposal {

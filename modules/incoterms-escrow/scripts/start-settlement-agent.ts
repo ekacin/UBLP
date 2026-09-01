@@ -37,7 +37,24 @@ if (!passphrase) {
 const secretsDir = process.env.SETTLEMENT_SECRETS_DIR;
 const dataDir = process.env.SETTLEMENT_DATA_DIR;
 
-const agent = await startSettlementAgent({ role, did, port, passphrase, secretsDir, dataDir });
+// Optional — throttles the unauthenticated /deals/incoming endpoint (agent-to-agent proposal
+// delivery). Left unset, startSettlementAgent's own default (20/minute) applies.
+const incomingOfferRateLimit = process.env.SETTLEMENT_INCOMING_RATE_LIMIT_MAX
+  ? {
+      max: Number(process.env.SETTLEMENT_INCOMING_RATE_LIMIT_MAX),
+      timeWindow: process.env.SETTLEMENT_INCOMING_RATE_LIMIT_WINDOW ?? '1 minute',
+    }
+  : undefined;
+
+const agent = await startSettlementAgent({
+  role,
+  did,
+  port,
+  passphrase,
+  secretsDir,
+  dataDir,
+  incomingOfferRateLimit,
+});
 console.log(`[settlement-agent] role=${role} listening on :${port}`);
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

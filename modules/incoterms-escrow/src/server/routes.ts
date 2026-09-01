@@ -20,11 +20,15 @@ import {
   getPendingAction,
   updatePendingActionStatus,
   listPendingActions,
+  listIncomingOffers,
+  getIncomingOffer,
+  updateIncomingOfferStatus,
 } from './db.js';
 import {
   type AgentContext,
   type ProposeDealParams,
   type LockDealParams,
+  type IncomingOfferEnvelope,
   proposeDeal,
   lockDeal,
   attestDeal,
@@ -32,6 +36,8 @@ import {
   releaseTimeoutDeal,
   getDealStatus,
   computePortAuthorityKeyHash,
+  receiveOffer,
+  tryDeliverOfferToBuyer,
 } from './actions.js';
 
 export function registerSettlementRoutes(app: FastifyInstance, ctx: AgentContext, auth: AuthStore): void {
@@ -55,10 +61,20 @@ export function registerSettlementRoutes(app: FastifyInstance, ctx: AgentContext
   // 2026-08-31: a second agent's browser session got a bare {"error":"unauthorized"} from these
   // until this exemption was added — the blanket hook below was catching them along with
   // everything else.
-  const PUBLIC_IDENTITY_PATHS = ['/identity/port-authority-key-hash', '/identity/memo-public-key'];
+  // Both of the following are public by GET/path — "no session on this agent" is exactly the
+  // caller they're for, a genuine counterparty during negotiation.
+  const PUBLIC_GET_PATHS = ['/identity/port-authority-key-hash', '/identity/memo-public-key'];
+  // POST /deals/incoming is public for the same reason (a different company's agent, agent-
+  // to-agent delivery below) — but unlike the two GETs, it's a write path that does real
+  // verification work and persists attacker-controlled data if abused, so it's rate-limited
+  // (see index.ts) rather than just exempted from auth. Method-gated deliberately: GET
+  // /deals/incoming (the operator's own inbox) must stay behind the normal session check.
+  const PUBLIC_POST_PATHS = ['/deals/incoming'];
 
   app.addHook('onRequest', async (req, reply) => {
-    if (req.url.startsWith('/auth/') || PUBLIC_IDENTITY_PATHS.includes(req.url)) return;
+    if (req.url.startsWith('/auth/')) return;
+    if (req.method === 'GET' && PUBLIC_GET_PATHS.includes(req.url)) return;
+    if (req.method === 'POST' && PUBLIC_POST_PATHS.includes(req.url)) return;
     const token = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
     if (!auth.isSessionValid(token)) {
       await reply.code(401).send({ error: 'unauthorized' });
@@ -111,17 +127,22 @@ export function registerSettlementRoutes(app: FastifyInstance, ctx: AgentContext
   });
 
   // ---- lockEscrow (buyer) — queued for approval, refuses a redundant resubmit ----
-  app.post<{ Body: LockDealParams }>('/deals/lock', async (req, reply) => {
+  app.post<{ Body: LockDealParams & { incomingOfferId?: number } }>('/deals/lock', async (req, reply) => {
     const inFlight = findInFlightAction(ctx.db, req.body.contractAddress, 'lockEscrow');
     if (inFlight) {
       return reply.code(409).send({ error: 'already_in_flight', pendingActionId: inFlight.id });
     }
+    const { incomingOfferId, ...body } = req.body;
     const pending = createPendingAction(ctx.db, {
-      dealRef: req.body.contractAddress,
+      dealRef: body.contractAddress,
       action: 'lockEscrow',
       requestedBy: 'operator',
-      payload: req.body as unknown as Record<string, unknown>,
+      payload: body as unknown as Record<string, unknown>,
     });
+    // Marks the source offer used as soon as it's queued (not only once approved/confirmed) —
+    // it's now committed to this pending action, so it shouldn't still show as an actionable
+    // "incoming offer" the operator could try to queue a second time.
+    if (incomingOfferId !== undefined) updateIncomingOfferStatus(ctx.db, incomingOfferId, 'used');
     return reply.code(202).send(pending);
   });
 
@@ -142,17 +163,28 @@ export function registerSettlementRoutes(app: FastifyInstance, ctx: AgentContext
       // `in` check on the result's inferred union keeps this a plain, TS-narrowable if/else.
       let result: { txId: string; contractAddress?: string; proposal?: unknown };
       let realDealRef: string | undefined;
+      let delivered = false;
       if (pending.action === 'propose') {
-        const proposeResult = await proposeDeal(ctx, pending.payload as unknown as ProposeDealParams);
+        const proposeParams = pending.payload as unknown as ProposeDealParams;
+        const proposeResult = await proposeDeal(ctx, proposeParams);
         result = proposeResult;
         realDealRef = proposeResult.contractAddress;
+        // Best-effort — see tryDeliverOfferToBuyer's doc comment for why a failure here is
+        // silent (the manual "Signed offer" copy/paste card is always the fallback).
+        delivered = await tryDeliverOfferToBuyer(
+          ctx,
+          proposeParams.buyerAgentUrl,
+          proposeResult.contractAddress,
+          proposeResult.proposal,
+          proposeParams.buyerMemoPublicKeyHex
+        );
       } else if (pending.action === 'lockEscrow') {
         result = await lockDeal(ctx, pending.payload as unknown as LockDealParams);
       } else {
         throw new Error(`Unsupported pending action: ${pending.action}`);
       }
       updatePendingActionStatus(ctx.db, id, 'confirmed', result.txId, realDealRef);
-      return { ...pending, ...result, status: 'confirmed' as const, dealRef: realDealRef ?? pending.dealRef };
+      return { ...pending, ...result, delivered, status: 'confirmed' as const, dealRef: realDealRef ?? pending.dealRef };
     } catch (err) {
       updatePendingActionStatus(ctx.db, id, 'failed');
       return reply.code(502).send({ error: 'chain_call_failed', message: (err as Error).message });
@@ -169,6 +201,37 @@ export function registerSettlementRoutes(app: FastifyInstance, ctx: AgentContext
 
   app.get<{ Querystring: { dealRef?: string } }>('/deals/pending', async (req) => {
     return listPendingActions(ctx.db, req.query.dealRef);
+  });
+
+  // ---- agent-to-agent incoming offers (buyer side) — encrypted, unauthenticated by
+  // necessity (see PUBLIC_POST_PATHS above), rate-limited via config.rateLimit (index.ts
+  // registers @fastify/rate-limit with global:false so only this route is throttled) ----
+  app.post<{ Body: IncomingOfferEnvelope }>(
+    '/deals/incoming',
+    { config: { rateLimit: ctx.incomingOfferRateLimit } },
+    async (req, reply) => {
+      try {
+        const offer = receiveOffer(ctx, req.body);
+        return reply.code(202).send(offer);
+      } catch (err) {
+        // Deliberately vague to the caller (a stranger on the internet) — the real reason
+        // (bad signature, wrong buyer, malformed envelope, this agent isn't a buyer) is
+        // logged server-side via Fastify's own request logging, not echoed back.
+        return reply.code(400).send({ error: 'offer_rejected' });
+      }
+    }
+  );
+
+  app.get('/deals/incoming', async () => {
+    return listIncomingOffers(ctx.db);
+  });
+
+  app.post<{ Params: { id: string } }>('/deals/incoming/:id/dismiss', async (req, reply) => {
+    const id = Number(req.params.id);
+    const offer = getIncomingOffer(ctx.db, id);
+    if (!offer) return reply.code(404).send({ error: 'not_found' });
+    updateIncomingOfferStatus(ctx.db, id, 'dismissed');
+    return { ...offer, status: 'dismissed' as const };
   });
 
   // ---- attest / claim / release-timeout — immediate, no approval gate (AGENTS.md 5.21) ----

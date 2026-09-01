@@ -101,6 +101,7 @@ const PendingQueue: React.FC<PendingQueueProps> = ({ onViewDeal }) => {
   // Only ever comes from a live approve response — never persisted server-side, so this is
   // the one chance to capture it (see api.ts's approvePending doc comment).
   const [justApproved, setJustApproved] = useState<EscrowProposal | null>(null);
+  const [justDelivered, setJustDelivered] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -122,7 +123,10 @@ const PendingQueue: React.FC<PendingQueueProps> = ({ onViewDeal }) => {
     setLastError(null);
     try {
       const result = await approvePending(id);
-      if (result.proposal) setJustApproved(result.proposal);
+      if (result.proposal) {
+        setJustApproved(result.proposal);
+        setJustDelivered(!!result.delivered);
+      }
       await refresh();
     } catch (err) {
       setLastError((err as Error).message);
@@ -175,16 +179,25 @@ const PendingQueue: React.FC<PendingQueueProps> = ({ onViewDeal }) => {
       {justApproved && (
         <div className="card">
           <div className="queue-item-head">
-            <div className="queue-item-title">Signed offer — send this to your buyer</div>
+            <div className="queue-item-title">
+              {justDelivered ? 'Signed offer — delivered to your buyer' : 'Signed offer — send this to your buyer'}
+            </div>
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => setJustApproved(null)}>
               Dismiss
             </button>
           </div>
-          <p className="action-note" style={{ marginTop: 8 }}>
-            This is not published anywhere the buyer can already see it — copy it and send it via
-            whatever channel you already use (email, chat, EDI). The buyer pastes it into their own
-            panel's "Lock a received offer" form.
-          </p>
+          {justDelivered ? (
+            <p className="action-note" style={{ marginTop: 8 }}>
+              Sent automatically, encrypted, straight to their agent — it's already waiting in their "Incoming
+              offers" list. The copy below is just a backup in case they'd rather have it out-of-band too.
+            </p>
+          ) : (
+            <p className="action-note" style={{ marginTop: 8 }}>
+              This is not published anywhere the buyer can already see it — copy it and send it via
+              whatever channel you already use (email, chat, EDI). The buyer pastes it into their own
+              panel's "Lock a received offer" form.
+            </p>
+          )}
           <textarea
             readOnly
             rows={6}

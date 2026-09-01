@@ -8,6 +8,7 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
 import cors from '@fastify/cors';
+import rateLimit from '@fastify/rate-limit';
 import { openTransactionLog, isUBLPDid, type UBLPDid } from '@ublp/shared';
 import { createAgentServer, startAgentServer } from '@ublp/shared';
 import { buildAgentWallet, type AgentRole } from '../deploy/wallet.js';
@@ -45,6 +46,11 @@ export interface SettlementAgentConfig {
   /** Defaults to 60s (watcher.ts). Overridable mainly for tests — a real deployment has no
    * reason to poll faster than once a minute. */
   watcherIntervalMs?: number;
+  /** Throttles the unauthenticated `/deals/incoming` write endpoint (agent-to-agent proposal
+   * delivery) — deliberately a config knob, not a hardcoded constant, since what's a
+   * reasonable rate depends on the operator's own traffic patterns. Defaults to a
+   * conservative 20 requests/minute per source IP. */
+  incomingOfferRateLimit?: { max: number; timeWindow: string | number };
 }
 
 export async function startSettlementAgent(config: SettlementAgentConfig): Promise<{ stop: () => Promise<void> }> {
@@ -60,7 +66,18 @@ export async function startSettlementAgent(config: SettlementAgentConfig): Promi
   const db = openSettlementDb(path.join(dataDir, 'settlement-agent.db'));
   const txLog = openTransactionLog(path.join(dataDir, 'transactions.db'));
 
-  const ctx: AgentContext = { role: config.role, did: config.did, network, wallet, providers, identity, db, txLog };
+  const incomingOfferRateLimit = config.incomingOfferRateLimit ?? { max: 20, timeWindow: '1 minute' };
+  const ctx: AgentContext = {
+    role: config.role,
+    did: config.did,
+    network,
+    wallet,
+    providers,
+    identity,
+    db,
+    txLog,
+    incomingOfferRateLimit,
+  };
   const auth = new AuthStore(secretsDir);
   const sweepInterval = setInterval(() => auth.sweepExpired(), 60_000);
 
@@ -74,6 +91,11 @@ export async function startSettlementAgent(config: SettlementAgentConfig): Promi
   // (routes.ts's onRequest hook), not network topology — CORS only gates whether a browser
   // lets its own JS *read* a response, not whether the request reaches the server.
   await app.register(cors, { origin: true });
+  // global: false — only routes that opt in via `config: { rateLimit: {...} }` are throttled
+  // (just POST /deals/incoming, see routes.ts). Every other route stays unthrottled: they're
+  // either behind the bearer-session check already, or the two intentionally-public identity
+  // GETs, which are cheap reads with no persisted side effect.
+  await app.register(rateLimit, { global: false });
   registerSettlementRoutes(app, ctx, auth);
   await startAgentServer(app, { port: config.port });
 

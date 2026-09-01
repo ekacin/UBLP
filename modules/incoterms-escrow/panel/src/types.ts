@@ -51,11 +51,31 @@ export interface ProposeDealParams {
   agreedAmount: string;
   durationSeconds?: number;
   timeoutDirection?: 'buyer' | 'seller';
+  /** Captured from the same Fetch step as buyerMemoPublicKeyHex — lets approve() attempt
+   * automatic encrypted delivery to the buyer instead of relying purely on manual copy/paste
+   * (see api.ts's approvePending doc comment). */
+  buyerAgentUrl?: string;
 }
 
 export interface LockDealParams {
   contractAddress: string;
   proposal: EscrowProposal;
+  /** Set when this Lock originated from an "incoming offer" (agent-to-agent delivery) rather
+   * than a manually-pasted blob — lets the backend mark that offer 'used' once queued. */
+  incomingOfferId?: number;
+}
+
+/** A proposal a counterparty's agent delivered directly (encrypted, agent-to-agent) — see
+ * server/actions.ts's receiveOffer. Distinct from PendingAction: nothing has been queued for
+ * approval yet, this is just "received, awaiting the operator's accept/dismiss decision". */
+export interface IncomingOffer {
+  id: number;
+  contractAddress: string;
+  proposal: EscrowProposal;
+  senderMemoPublicKeyHex: string;
+  status: 'pending' | 'dismissed' | 'used';
+  receivedAt: number;
+  updatedAt: number;
 }
 
 export type PendingActionStatus =

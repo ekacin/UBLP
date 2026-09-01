@@ -6,9 +6,10 @@ import PendingQueue from './pages/PendingQueue';
 import DealStatus from './pages/DealStatus';
 import NewDeal from './pages/NewDeal';
 import OpenDeal from './pages/OpenDeal';
+import IncomingOffers from './pages/IncomingOffers';
 import InstanceSwitcher from './components/InstanceSwitcher';
 
-type View = 'queue' | 'newDeal' | 'openDeal';
+type View = 'queue' | 'newDeal' | 'openDeal' | 'incoming';
 
 const ROLE_LABEL: Record<string, string> = {
   buyer: 'Buyer',
@@ -93,6 +94,15 @@ const App: React.FC = () => {
                 >
                   New deal
                 </button>
+                {identity?.role === 'buyer' && (
+                  <button
+                    type="button"
+                    className={`btn btn-sm ${effectiveView === 'incoming' ? 'btn-primary' : ''}`}
+                    onClick={() => setView('incoming')}
+                  >
+                    Incoming offers
+                  </button>
+                )}
                 <button
                   type="button"
                   className={`btn btn-sm ${effectiveView === 'openDeal' ? 'btn-primary' : ''}`}
@@ -106,6 +116,7 @@ const App: React.FC = () => {
             {effectiveView === 'newDeal' && (
               <NewDeal role={identity?.role ?? null} onCreated={() => setView('queue')} />
             )}
+            {effectiveView === 'incoming' && <IncomingOffers onQueued={() => setView('queue')} />}
             {effectiveView === 'openDeal' && <OpenDeal onOpen={setViewingDeal} />}
           </>
         )}

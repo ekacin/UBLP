@@ -67,6 +67,17 @@ CREATE TABLE IF NOT EXISTS deal_private_state (
   state TEXT NOT NULL,
   updatedAt INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS incoming_offers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  contractAddress TEXT NOT NULL,
+  proposal TEXT NOT NULL,
+  senderMemoPublicKeyHex TEXT NOT NULL,
+  status TEXT NOT NULL,
+  receivedAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_incoming_offers_status ON incoming_offers(status);
 `;
 
 export function openSettlementDb(dbPath: string): SettlementDb {
@@ -211,4 +222,59 @@ export function listDealRefs(db: SettlementDb): string[] {
     dealRef: string;
   }[];
   return rows.map((r) => r.dealRef);
+}
+
+// ---- incoming offers (agent-to-agent delivery, see server/delivery.ts) — a proposal a
+// counterparty's agent POSTed directly to this one, already decrypted and signature-verified
+// before it ever reaches this table (routes.ts never persists an unverified payload). Distinct
+// from `pending_actions`: nothing has been queued for approval yet, this is just "received,
+// awaiting the operator's decision to accept & lock or dismiss". ----
+
+export type IncomingOfferStatus = 'pending' | 'dismissed' | 'used';
+
+export interface IncomingOffer {
+  id: number;
+  contractAddress: string;
+  proposal: Record<string, unknown>; // EscrowProposal — kept untyped here to avoid a db.ts -> escrow.ts import
+  senderMemoPublicKeyHex: string;
+  status: IncomingOfferStatus;
+  receivedAt: number;
+  updatedAt: number;
+}
+
+function toIncomingOffer(raw: any): IncomingOffer {
+  return { ...raw, proposal: JSON.parse(raw.proposal) };
+}
+
+export function createIncomingOffer(
+  db: SettlementDb,
+  entry: Pick<IncomingOffer, 'contractAddress' | 'proposal' | 'senderMemoPublicKeyHex'>
+): IncomingOffer {
+  const now = Date.now();
+  const result = db
+    .prepare(
+      `INSERT INTO incoming_offers (contractAddress, proposal, senderMemoPublicKeyHex, status, receivedAt, updatedAt)
+       VALUES (@contractAddress, @proposal, @senderMemoPublicKeyHex, 'pending', @now, @now)`
+    )
+    .run({
+      contractAddress: entry.contractAddress,
+      proposal: JSON.stringify(entry.proposal),
+      senderMemoPublicKeyHex: entry.senderMemoPublicKeyHex,
+      now,
+    });
+  return getIncomingOffer(db, Number(result.lastInsertRowid))!;
+}
+
+export function getIncomingOffer(db: SettlementDb, id: number): IncomingOffer | null {
+  const row = db.prepare(`SELECT * FROM incoming_offers WHERE id = ?`).get(id);
+  return row ? toIncomingOffer(row) : null;
+}
+
+export function listIncomingOffers(db: SettlementDb): IncomingOffer[] {
+  const rows = db.prepare(`SELECT * FROM incoming_offers ORDER BY receivedAt DESC`).all();
+  return rows.map(toIncomingOffer);
+}
+
+export function updateIncomingOfferStatus(db: SettlementDb, id: number, status: IncomingOfferStatus): void {
+  db.prepare(`UPDATE incoming_offers SET status = ?, updatedAt = ? WHERE id = ?`).run(status, Date.now(), id);
 }

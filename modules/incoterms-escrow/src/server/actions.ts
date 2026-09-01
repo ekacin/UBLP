@@ -28,6 +28,8 @@ import {
   logTransaction,
   queryTransactions,
   isUBLPDid,
+  encryptDualRecipientMemo,
+  decryptDualRecipientMemo,
   type TransactionLogDb,
   type UBLPDid,
 } from '@ublp/shared';
@@ -49,10 +51,12 @@ import type { SettlementIdentity } from './identity.js';
 import { proposeEscrow, acceptEscrow, type EscrowTerms, type EscrowProposal } from '../escrow.js';
 import {
   type SettlementDb,
+  type IncomingOffer,
   getCachedMtIndex,
   setCachedMtIndex,
   saveDealPrivateState,
   loadDealPrivateState,
+  createIncomingOffer,
 } from './db.js';
 
 export interface AgentContext {
@@ -68,6 +72,11 @@ export interface AgentContext {
   identity: SettlementIdentity;
   db: SettlementDb;
   txLog: TransactionLogDb;
+  /** Per-project-memory plan: rate limiting on the unauthenticated `/deals/incoming` write
+   * endpoint must be customizable, not a hardcoded constant — see index.ts for the env-var-
+   * driven default. `timeWindow` matches @fastify/rate-limit's own accepted format
+   * (milliseconds, or a string like '1 minute'). */
+  incomingOfferRateLimit: { max: number; timeWindow: string | number };
 }
 
 function hexToBytes(hex: string): Uint8Array {
@@ -121,6 +130,12 @@ export interface ProposeDealParams {
   agreedAmount: string; // integer string, smallest unit
   durationSeconds?: number;
   timeoutDirection?: 'buyer' | 'seller';
+  /** The buyer's own agent base URL, if the operator already had it (e.g. from the same Fetch
+   * step used for `buyerMemoPublicKeyHex`) — lets the approve step attempt automatic,
+   * encrypted delivery (see `tryDeliverOfferToBuyer`) instead of relying purely on the
+   * operator manually copying the signed-offer card to the buyer out-of-band. Optional: the
+   * manual path stays fully functional if this is left unset. */
+  buyerAgentUrl?: string;
 }
 
 export interface ProposeDealResult {
@@ -207,6 +222,93 @@ export async function proposeDeal(ctx: AgentContext, params: ProposeDealParams):
 }
 
 // ---- lockEscrow (buyer only) ----
+
+// ---- agent-to-agent proposal delivery — encrypted, no central relay (see project memory
+// "agent-to-agent delivery plan": encryption is not a fast-follow, it ships with delivery) ----
+
+export interface IncomingOfferEnvelope {
+  senderMemoPublicKeyHex: string;
+  ciphertextHex: string;
+}
+
+/**
+ * Encrypts a just-approved propose's (contractAddress, proposal) pair for direct delivery to
+ * the buyer's own agent. Reuses the X25519 dual-recipient scheme already built for the
+ * on-chain memo (AGENTS.md 5.18's dualRecipientMemo.ts) — its ECDH+ChaCha20-Poly1305
+ * primitive is payload-size agnostic, only the on-chain memo's fixed 141/126-byte layout is
+ * chain-specific, not the encryption itself, so it applies unchanged to this larger JSON blob.
+ *
+ * Encrypting this is not optional: `EscrowTerms` carries the deal amount and every party's
+ * DID in plaintext — exactly what the on-chain shielded-commitment/attestation design exists
+ * to hide. An unencrypted copy of this JSON (sitting in an email, a chat log, or an
+ * unauthenticated HTTP request body) defeats that the moment it's captured in transit or at
+ * rest on either agent's disk/logs.
+ */
+export function encryptOfferForBuyer(
+  ctx: AgentContext,
+  contractAddress: string,
+  proposal: EscrowProposal,
+  buyerMemoPublicKeyHex: string
+): IncomingOfferEnvelope {
+  const plaintext = Buffer.from(JSON.stringify({ contractAddress, proposal }), 'utf8');
+  const ciphertextHex = encryptDualRecipientMemo(plaintext, ctx.identity.memoKeyPair.privateKey, buyerMemoPublicKeyHex);
+  return { senderMemoPublicKeyHex: ctx.identity.memoKeyPair.publicKey, ciphertextHex };
+}
+
+/**
+ * Buyer side — decrypts, then runs the exact same `acceptEscrow` check the manual
+ * copy-paste Lock form always required (signature + addressed-to-me). The inbound HTTP route
+ * this feeds (routes.ts's `/deals/incoming`) is necessarily unauthenticated — the sender is a
+ * different company with no session on this agent — so this verification IS the entire trust
+ * boundary here: reject and never persist on any failure, same as today's manual flow already
+ * does at lockEscrow time, just moved earlier (at receipt, not at lock).
+ */
+export function receiveOffer(ctx: AgentContext, envelope: IncomingOfferEnvelope): IncomingOffer {
+  if (ctx.role !== 'buyer') throw new Error('Only a buyer-role agent can receive incoming offers.');
+  const plaintext = decryptDualRecipientMemo(
+    envelope.ciphertextHex,
+    ctx.identity.memoKeyPair.privateKey,
+    envelope.senderMemoPublicKeyHex
+  );
+  const parsed = JSON.parse(plaintext.toString('utf8')) as { contractAddress: string; proposal: EscrowProposal };
+  if (!parsed.contractAddress || !parsed.proposal?.terms || !parsed.proposal?.sellerSignature) {
+    throw new Error('Malformed incoming offer payload.');
+  }
+  acceptEscrow(parsed.proposal, ctx.did); // throws on invalid signature / wrong buyer / non-positive amount
+  return createIncomingOffer(ctx.db, {
+    contractAddress: parsed.contractAddress,
+    proposal: parsed.proposal as unknown as Record<string, unknown>,
+    senderMemoPublicKeyHex: envelope.senderMemoPublicKeyHex,
+  });
+}
+
+/**
+ * Best-effort push, right after a propose is approved — if `buyerAgentUrl` wasn't supplied
+ * (an operator who skipped the Fetch step, or an older client) or the buyer's agent is
+ * unreachable, this fails silently and PendingQueue's "Signed offer" copy/paste card remains
+ * the fallback. A delivery failure must never fail the approve itself — the propose is
+ * already confirmed on-chain by the time this runs.
+ */
+export async function tryDeliverOfferToBuyer(
+  ctx: AgentContext,
+  buyerAgentUrl: string | undefined,
+  contractAddress: string,
+  proposal: EscrowProposal,
+  buyerMemoPublicKeyHex: string
+): Promise<boolean> {
+  if (!buyerAgentUrl) return false;
+  try {
+    const envelope = encryptOfferForBuyer(ctx, contractAddress, proposal, buyerMemoPublicKeyHex);
+    const res = await fetch(`${buyerAgentUrl.replace(/\/$/, '')}/deals/incoming`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(envelope),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 export interface LockDealParams {
   contractAddress: string;

@@ -27,7 +27,7 @@ const emptyProposeForm: ProposeDealParams = {
  * mistyped DID (which later fails the counterparty's own addressed-to-me check) can't happen. */
 const FetchIdentityButton: React.FC<{
   which: 'port-authority-key-hash' | 'memo-public-key';
-  onFetched: (hex: string, did: string) => void;
+  onFetched: (hex: string, did: string, agentUrl: string) => void;
 }> = ({ which, onFetched }) => {
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
@@ -39,7 +39,7 @@ const FetchIdentityButton: React.FC<{
     setError(null);
     try {
       const { hex, did } = await fetchCounterpartyIdentity(url, which);
-      onFetched(hex, did);
+      onFetched(hex, did, url);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -138,9 +138,13 @@ const ProposeForm: React.FC<{ onCreated: () => void }> = ({ onCreated }) => {
       </label>
       <FetchIdentityButton
         which="memo-public-key"
-        onFetched={(hex, did) => {
+        onFetched={(hex, did, agentUrl) => {
           set('buyerMemoPublicKeyHex', hex);
           set('buyerDid', did);
+          // Reused for automatic agent-to-agent delivery on approve (server/actions.ts's
+          // tryDeliverOfferToBuyer) — the operator already had to type this URL for the
+          // Fetch above, no reason to ask for it again.
+          set('buyerAgentUrl', agentUrl);
         }}
       />
 
