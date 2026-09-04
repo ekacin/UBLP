@@ -11,6 +11,7 @@ Protects customs, freight, and supply chain documents against manipulation using
 | Module | Directory | Description |
 |--------|-----------|-------------|
 | ZK Customs Clearance | [`modules/zk-customs`](./modules/zk-customs) | Customs document ZK proof, BLS committee attestation, L2 settlement |
+| Incoterms Escrow | [`modules/incoterms-escrow`](./modules/incoterms-escrow) | Incoterms-based trade escrow on Midnight Network, with ZK-shielded fund custody and encrypted agent-to-agent deal delivery |
 
 ---
 
