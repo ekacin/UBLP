@@ -1,0 +1,250 @@
+# Incoterms Escrow
+
+> **Status: v0.1, not production-ready.** This is an early-stage reference implementation —
+> FOB only, no external security audit, and several hardening items (see
+> [Current scope](#current-scope) and [Security notes](#security-notes)) are still open. Do not
+> move real funds with it yet.
+
+`@ublp/incoterms-escrow` is a Midnight Network smart-contract escrow system for settling
+international trade deals under [Incoterms](https://iccwbo.org/business-solutions/incoterms-rules/)
+rules. The current release implements **FOB (Free on Board)**; the same state machine and
+policy pattern are designed to extend to the remaining Incoterms rules incrementally.
+
+Funds and deal terms move through a Compact smart contract on Midnight, so amounts and payout
+addresses are never written to the chain in plaintext — only zero-knowledge commitments are.
+Everything else (who is negotiating with whom, the actual deal terms) is exchanged directly
+between the counterparties' own agents, encrypted, with no UBLP-operated server anywhere in
+the path.
+
+## How a deal works
+
+A deal has three parties and moves through four states:
+
+```
+Empty -> Proposed -> Locked -> Released
+```
+
+- **Seller** creates the offer (`propose`), fixing the terms — amount, deadline, and the
+  identity of the party who will confirm loading.
+- **Buyer** reviews the offer and locks funds into the contract (`lockEscrow`). Locking is a
+  precondition for shipping to start, not a step that happens afterward.
+- **Port authority** (or any neutral party acting as the "C" role) confirms loading took place
+  (`attestLoadingConfirmed`). This call proves only the caller's own identity — it never touches
+  financial data, by design.
+- Once loading is confirmed, anyone can trigger `claimPayout` to release funds to the seller (in
+  practice the seller's own agent does this automatically).
+- If the port authority never attests, `releaseOnTimeout` acts as a safety net once the deadline
+  passes, paying out to whichever party was designated at proposal time — this call is
+  deliberately unauthenticated, since a stuck deal must always be resolvable by someone.
+
+Two independent commitment patterns keep the deal private on-chain: fund custody is shielded
+(the coin amount is never in plaintext on the ledger — only a commitment hash is), and payout
+addresses are likewise never written directly, only committed to and checked at release time.
+
+## Architecture
+
+Each company runs its **own** settlement-agent (backend) and connects to it with the **panel**
+(a React frontend). There is no shared or UBLP-operated backend — a buyer, a seller, and a port
+authority are three genuinely separate deployments, each with its own wallet, identity, and
+data store.
+
+```
+company's browser  --(wallet-signature session)-->  their own settlement-agent  --> Midnight
+       |                                                      |
+       +-- panel (React, Vite) ------------------------------+
+```
+
+- **Contract** (`contracts/Escrow.compact`) — the escrow state machine described above, compiled
+  to a ZK circuit set with the Compact compiler.
+- **Settlement agent** (`src/server`) — a Fastify HTTP server, one per company/role. Wraps the
+  contract calls, manages that company's own Midnight wallet, and exposes a small approval
+  queue so a human signs off before any financial commitment (`propose`/`lockEscrow`) is
+  submitted.
+- **Panel** (`panel/`) — a browser UI that authenticates against a settlement agent via a
+  wallet-signature challenge/response (no passwords), shows pending approvals and deal status,
+  and can manage more than one agent instance in the same browser session (useful when one
+  company acts as both buyer and seller across different deals).
+- **Agent-to-agent delivery** — once a seller approves an offer, it is delivered automatically
+  and directly to the buyer's own agent, encrypted end-to-end so that even a compromised
+  transport never exposes the deal terms. There is no relay or intermediary between the two
+  agents.
+
+### Reaching a counterparty
+
+An agent is identified purely by its base URL — there is no fixed IP requirement and no
+directory service to register with. In practice this means an operator can expose their
+settlement agent behind their own real domain name (e.g. `https://escrow.acme-export.com`,
+reverse-proxied per the [Security notes](#security-notes) below) and simply hand that domain to
+a counterparty, the same way you'd hand out a company email address. The panel's instance
+switcher and the agent-to-agent delivery endpoint both work off this base URL alone.
+
+## Repository layout
+
+```
+contracts/            Compact source (Escrow.compact) and compiled output
+src/
+  contract/            witnesses, memo encryption, contract-address helpers
+  deploy/               network config, wallet construction, provider wiring
+  policies/             per-Incoterm-rule policy logic (fob.ts today)
+  server/               HTTP routes, auth, identity, db, deal watcher
+scripts/
+  devnet/               local devnet helpers: deploy, fund wallets, full lifecycle runs
+panel/                 React frontend (Vite)
+tests/                 unit and integration tests (Vitest)
+```
+
+## Prerequisites
+
+- Node.js and npm (workspace-managed — run commands from the repository root or this package
+  with `-w @ublp/incoterms-escrow`)
+- The [Compact compiler](https://docs.midnight.network/relnotes/compact) on your `PATH`, for
+  `npm run compile:contract`
+- A running Midnight devnet (e.g. via `midnight-local-dev`) and a local proof server for local
+  development — see `src/deploy/networks.ts` for the exact endpoints expected
+
+## Getting started (local devnet)
+
+1. Compile the contract:
+   ```bash
+   npm run compile:contract -w @ublp/incoterms-escrow
+   ```
+2. Generate local test wallets and fund them:
+   ```bash
+   npx tsx scripts/devnet/generate-test-accounts.ts
+   npx tsx scripts/devnet/fund-agent-role.ts buyer
+   npx tsx scripts/devnet/fund-agent-role.ts seller
+   npx tsx scripts/devnet/fund-agent-role.ts port-authority
+   ```
+3. Start a settlement agent per role (each needs its own terminal, port, and — for more than
+   one role on one machine — its own `SETTLEMENT_SECRETS_DIR`/`SETTLEMENT_DATA_DIR`):
+   ```bash
+   SETTLEMENT_ROLE=seller SETTLEMENT_DID=did:ublp:seller:acme-export \
+     SETTLEMENT_PORT=4100 SETTLEMENT_PASSPHRASE=devnet-only \
+     npm run start:settlement-agent -w @ublp/incoterms-escrow
+   ```
+4. Start the panel:
+   ```bash
+   npm run dev -w @ublp/incoterms-escrow-panel
+   ```
+   Point it at an agent with `VITE_AGENT_BASE_URL` (default `http://127.0.0.1:4100`), then use
+   the instance switcher in the UI to add and switch between roles.
+
+For a scripted, non-interactive run through the whole lifecycle (useful for verifying a fresh
+setup), see `scripts/devnet/full-lifecycle.ts`.
+
+### Wallet funding requirements
+
+Each agent's wallet needs **two distinct kinds of funding**, and mixing them up is a common
+mistake:
+
+- **Shielded NIGHT**, to actually fund the escrowed amount. The contract only ever moves coins
+  through Midnight's shielded (Zswap) pool — an escrow can only be locked with shielded funds.
+  A faucet only ever pays into an **unshielded** address, so unshielded NIGHT has to be
+  converted to shielded NIGHT before it can be used here (`fund-agent-role.ts` does this by
+  transferring shielded-to-shielded from an already-shielded source, since a direct
+  unshielded→shielded conversion is not yet reliable at the SDK level this project uses).
+- **Unshielded NIGHT, registered for DUST generation**, to pay transaction fees. DUST — the
+  resource that actually pays for a transaction — is only generated from unshielded NIGHT UTXOs
+  that have been explicitly registered for it; shielded NIGHT never generates DUST no matter
+  the amount.
+
+`scripts/devnet/fund-agent-role.ts <buyer|seller|port-authority>` funds a role's wallet with
+both in one step.
+
+## Configuration
+
+Settlement-agent environment variables (`scripts/start-settlement-agent.ts`):
+
+| Variable | Required | Description |
+|---|---|---|
+| `SETTLEMENT_ROLE` | yes | `buyer`, `seller`, or `port-authority` |
+| `SETTLEMENT_DID` | yes | This company's own `did:ublp:...` identifier |
+| `SETTLEMENT_PORT` | no (default `4100`) | HTTP port for this agent |
+| `SETTLEMENT_PASSPHRASE` | yes | Decrypts this agent's wallet and identity secrets. In production this should come from a secrets manager, not a plain environment variable |
+| `SETTLEMENT_SECRETS_DIR` | no | Override for where wallet/identity secrets live — required when running more than one role from the same checkout |
+| `SETTLEMENT_DATA_DIR` | no | Override for where this agent's local SQLite stores live |
+| `SETTLEMENT_INCOMING_RATE_LIMIT_MAX` | no (default `20`) | Max requests per window to the public `/deals/incoming` endpoint |
+| `SETTLEMENT_INCOMING_RATE_LIMIT_WINDOW` | no (default `1 minute`) | Rate-limit window, in `@fastify/rate-limit` format |
+
+Panel build-time variable:
+
+| Variable | Description |
+|---|---|
+| `VITE_AGENT_BASE_URL` | Default agent base URL seeded into the instance switcher on first load |
+| `VITE_NETWORK_ID` | Network hint passed to the wallet connector — must match whatever network the browser's Midnight wallet extension is actually set to, or the connection is rejected |
+
+## Testing
+
+```bash
+npm test -w @ublp/incoterms-escrow
+```
+
+Covers the contract's core logic, witness behavior, the FOB policy, encrypted-memo
+round-tripping, and the settlement agent's server-side pieces (auth, db, deal policy, identity).
+
+## Cryptography
+
+What's protected, and how:
+
+- **Escrowed fund amounts** move through Midnight's shielded (Zswap) pool. On-chain, the ledger
+  only ever stores a `persistentCommit` hash of the coin's nonce/color/value — never the amount
+  itself. A commitment is opened later only by supplying the real value as a witness and
+  checking it against the stored hash.
+- **Payout addresses** (both the seller's and the buyer's) are handled the same way: never
+  written to the ledger directly — only committed to, at proposal/lock time. This is what makes
+  `releaseOnTimeout` safe to leave callable by anyone: since the real address is never public,
+  there's nothing for an unauthenticated caller to redirect.
+- **Deal terms in transit and in the on-chain memo** are encrypted with static-static
+  **X25519 ECDH** (HKDF-derived key) and **ChaCha20-Poly1305 AEAD** — a dual-recipient scheme
+  where either party (the author or the counterparty) can decrypt the same ciphertext with only
+  their own private key and the other side's public key. This one scheme covers both:
+  1. the on-chain encrypted memo fields (so the deal's coin data and payout address survive on
+     the ledger without ever being legible to anyone but the two parties), and
+  2. the agent-to-agent HTTP delivery of a signed offer — the exact same encryption is reused
+     there, so a compromised or logged transport (a proxy, a misconfigured log line) still never
+     exposes the plaintext terms.
+- **Panel login** is a wallet-signature challenge/response — the agent issues a one-time
+  challenge, the wallet signs it, and the agent verifies the signature. No password is ever
+  stored or transmitted.
+
+**Strengths of this design:** amounts and payout destinations are never plaintext on a public
+ledger; the same encryption protects the data whether it's sitting on-chain or moving over
+HTTP, so there's only one scheme to reason about; and because the memo is symmetric between
+author and counterparty, no separate key-exchange or side channel is needed to hand off private
+data — it rides along with the transaction itself.
+
+## Security notes
+
+- **Every deployment is self-hosted, per company.** A buyer, a seller, and a port authority are
+  three independent processes with independent wallets and independent secrets — there is no
+  shared operator and no relay between them. If you run more than one role's agent from a
+  shared, un-hardened host, a compromise of that host compromises every role on it at once.
+- **Authentication** to a settlement agent's panel is a wallet-signature challenge/response, not
+  a password. If you disable or bypass this (e.g. exposing the API without going through the
+  panel's auth flow), anyone who can reach the agent's port can drive its approval queue.
+- **Two endpoints are intentionally public** on each agent: the identity lookups a counterparty
+  needs before any session exists, and `POST /deals/incoming` (the agent-to-agent proposal
+  delivery endpoint), which is rate-limited per the table above precisely because it accepts
+  unauthenticated writes from the public internet. If you raise or disable that rate limit, this
+  endpoint becomes a straightforward spam/DoS target — every request costs real CPU on signature
+  verification and can persist attacker-controlled data.
+- **Put a reverse proxy in front of your public agent.** Every settlement agent is self-hosted
+  and exposes at least one unauthenticated write endpoint. If you expose an agent directly to
+  the public internet without a reverse proxy or CDN/WAF (Cloudflare or an equivalent) in front
+  of it, you lose TLS termination and the DDoS/abuse protection that layer would otherwise
+  absorb — the application itself has no way to provide either. This is an operator-level
+  deployment decision the code can't enforce, so it's documented here instead: always put one
+  in front before going live.
+- **Secrets** (wallet mnemonic, identity keys) are encrypted at rest with `SETTLEMENT_PASSPHRASE`.
+  Treat that passphrase the same way you would treat the keys themselves — if it leaks (a plain
+  environment variable in a process listing, a CI log, a shell history file), everything it
+  protects leaks with it. A real deployment should source it from a secrets manager, not a
+  plain environment variable.
+
+## Current scope
+
+v0.1 implements the FOB Incoterm rule only, against a local devnet — it has not been run
+against a public Midnight network or audited. The contract's state machine and the settlement
+agent's policy layer (`src/policies/`) are structured so the remaining Incoterms rules can be
+added incrementally following the same pattern. Treat this repository as a reference
+implementation to build on, not as something to point at real trade flows yet.
