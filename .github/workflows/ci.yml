@@ -189,6 +189,77 @@ jobs:
       - name: Run incoterms-escrow tests
         run: npm run test:incoterms-escrow
 
+  incoterms-escrow-e2e:
+    name: Incoterms Escrow (Module 4) E2E — Local Devnet
+    needs: incoterms-escrow-tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Compact CLI
+        run: |
+          curl -sSLf https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Compile Escrow contract
+        run: |
+          compact update ${{ env.COMPACT_VERSION }}
+          npm run compile:contract -w @ublp/incoterms-escrow
+
+      - name: Build all workspaces
+        run: npm run build
+
+      - name: Start local Midnight devnet
+        run: npm run devnet:up -w @ublp/incoterms-escrow
+
+      - name: Wait for devnet to be healthy
+        run: |
+          for i in $(seq 1 30); do
+            ready=true
+            for c in midnight-node midnight-indexer midnight-proof-server; do
+              status=$(docker inspect --format='{{.State.Health.Status}}' "$c" 2>/dev/null || echo missing)
+              [ "$status" = "healthy" ] || ready=false
+            done
+            if [ "$ready" = true ]; then echo "All services healthy"; exit 0; fi
+            echo "Still waiting on devnet containers (attempt $i/30)..."
+            sleep 10
+          done
+          docker compose -f modules/incoterms-escrow/scripts/devnet/standalone.yml logs
+          echo "::error::Devnet did not become healthy in time"
+          exit 1
+
+      # full-lifecycle.ts self-funds the buyer's SHIELDED balance from the genesis wallet, but
+      # assumes all three roles already have spendable DUST (unshielded NIGHT registered for
+      # fee generation) to submit their own propose/lockEscrow/attestMilestone/claimPayout
+      # transactions — see lifecycle-helpers.ts's fundUnshieldedAndRegisterDust doc comment for
+      # why that's a separate concern from shielded funding. A brand-new CI devnet has neither,
+      # so both must be provisioned here first.
+      - name: Fund buyer/seller/port-authority wallets with NIGHT + DUST
+        working-directory: modules/incoterms-escrow
+        run: |
+          npm run devnet:fund -- seller
+          npm run devnet:fund -- buyer
+          npm run devnet:fund -- port-authority
+
+      - name: Run full escrow lifecycle against the real local devnet
+        working-directory: modules/incoterms-escrow
+        run: npm run e2e:devnet
+
+      - name: Stop local Midnight devnet
+        if: always()
+        run: npm run devnet:down -w @ublp/incoterms-escrow
+
   # SP1 circuit build (Rust) — only if Rust files changed
   sp1-circuit:
     name: SP1 Circuit Build Check

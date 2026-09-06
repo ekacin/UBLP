@@ -154,19 +154,17 @@ tests/                 unit and integration tests (Vitest)
 
 ## Getting started (local devnet)
 
-0. **Start a local Midnight devnet.** This repository doesn't bundle one — pull the official
-   [`midnight-local-dev`](https://github.com/midnightntwrk/midnight-local-dev) tool separately
-   and bring up its three containers (node, indexer, proof server):
+0. **Start a local Midnight devnet.** `scripts/devnet/standalone.yml` is a self-contained copy
+   of the official [`midnight-local-dev`](https://github.com/midnightntwrk/midnight-local-dev)
+   tool's compose file — no external clone needed, just Docker:
    ```bash
-   git clone https://github.com/midnightntwrk/midnight-local-dev.git
-   cd midnight-local-dev
-   npm install
-   docker compose -f standalone.yml up -d
-   docker compose -f standalone.yml ps   # wait until all three report healthy
+   npm run devnet:up -w @ublp/incoterms-escrow
+   docker compose -f scripts/devnet/standalone.yml ps   # wait until all three report healthy
    ```
    This exposes `localhost:9944` (node), `localhost:8088` (indexer), and `localhost:6300`
    (proof server) — exactly what `src/deploy/networks.ts` expects, no extra configuration
-   needed. Leave it running in the background; everything below assumes it's up.
+   needed. Leave it running in the background; everything below assumes it's up. Tear it down
+   later with `npm run devnet:down -w @ublp/incoterms-escrow`.
 1. Compile the contract:
    ```bash
    npm run compile:contract -w @ublp/incoterms-escrow
