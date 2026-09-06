@@ -194,6 +194,14 @@ tests/                 unit and integration tests (Vitest)
      SETTLEMENT_PORT=4100 SETTLEMENT_PASSPHRASE=devnet-only \
      npm run start:settlement-agent -w @ublp/incoterms-escrow
    ```
+   `devnet-only` above is just a placeholder — the *first* time an agent runs for a given
+   `SETTLEMENT_SECRETS_DIR`, whatever value you pass becomes that role's real passphrase, since
+   it's used right then to encrypt a freshly-generated wallet/identity. **If that directory
+   already has secrets in it from an earlier run** (yours or someone else's), you must supply
+   the exact same passphrase used back then, not this README's example — a mismatch fails loudly
+   at startup with a decryption error (`Unsupported state or unable to authenticate data`), it
+   does not silently create a new identity. There's no way to recover a forgotten passphrase
+   short of deleting the secrets directory and starting over with a fresh identity/wallet.
 4. Start the panel:
    ```bash
    npm run dev -w @ublp/incoterms-escrow-panel
@@ -292,7 +300,7 @@ Settlement-agent environment variables (`scripts/start-settlement-agent.ts`):
 | `SETTLEMENT_ROLE` | yes | `buyer`, `seller`, or `port-authority` |
 | `SETTLEMENT_DID` | yes | This company's own `did:ublp:...` identifier |
 | `SETTLEMENT_PORT` | no (default `4100`) | HTTP port for this agent |
-| `SETTLEMENT_PASSPHRASE` | yes | Decrypts this agent's wallet and identity secrets. In production this should come from a secrets manager, not a plain environment variable |
+| `SETTLEMENT_PASSPHRASE` | yes | Decrypts this agent's wallet and identity secrets. Must match whatever value was used the *first* time this `SETTLEMENT_SECRETS_DIR` was populated — see the note in [Getting started](#getting-started-local-devnet). In production this should come from a secrets manager, not a plain environment variable |
 | `SETTLEMENT_SECRETS_DIR` | no | Override for where wallet/identity secrets live — required when running more than one role from the same checkout |
 | `SETTLEMENT_DATA_DIR` | no | Override for where this agent's local SQLite stores live |
 | `SETTLEMENT_INCOMING_RATE_LIMIT_MAX` | no (default `20`) | Max requests per window to the public `/deals/incoming` endpoint |
