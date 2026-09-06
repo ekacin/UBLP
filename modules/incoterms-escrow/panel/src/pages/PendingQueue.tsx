@@ -171,7 +171,11 @@ const PendingQueue: React.FC<PendingQueueProps> = ({ onViewDeal }) => {
           <div className="blocking-card">
             <div className="spinner" />
             <div className="blocking-title">Submitting to the network</div>
-            <div className="blocking-sub">This generates a real ZK proof and can take 30–60 seconds. Don't close this page.</div>
+            <div className="blocking-sub">
+              This generates a real ZK proof and can take 30–60 seconds. Don't close this page.
+              Funds are drawn from this agent's own wallet — not the personal wallet you signed in
+              with, which is used only to authenticate this session.
+            </div>
           </div>
         </div>
       )}

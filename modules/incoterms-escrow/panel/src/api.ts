@@ -139,11 +139,20 @@ export function lockDeal(params: LockDealParams): Promise<PendingAction> {
  * email/chat. Returns the DID alongside the hex — a mistyped DID is exactly the kind of
  * transcription error this endpoint exists to avoid in the first place, same as the hex
  * itself. Never used for anything but these two read-only GETs. */
+/** Accepts a bare host/domain (e.g. "127.0.0.1:4200" or "escrow.acme-export.com") as well as a
+ * full URL — an operator typing a counterparty's address by hand shouldn't have to remember the
+ * "http://" prefix. Defaults to http:// (every local/devnet agent is plain HTTP); a real
+ * production counterparty on https:// still needs the scheme typed explicitly, since guessing
+ * https vs. http for an arbitrary domain isn't reliable. */
+export function normalizeAgentBaseUrl(input: string): string {
+  return /^https?:\/\//i.test(input) ? input : `http://${input}`;
+}
+
 export async function fetchCounterpartyIdentity(
   agentBaseUrl: string,
   which: 'port-authority-key-hash' | 'memo-public-key'
 ): Promise<{ hex: string; did: string }> {
-  const res = await fetch(`${agentBaseUrl.replace(/\/$/, '')}/identity/${which}`);
+  const res = await fetch(`${normalizeAgentBaseUrl(agentBaseUrl).replace(/\/$/, '')}/identity/${which}`);
   const text = await res.text();
   const json = text ? JSON.parse(text) : undefined;
   if (!res.ok) throw new ApiError(res.status, json?.error ?? `${res.status}`);

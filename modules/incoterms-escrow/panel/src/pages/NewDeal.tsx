@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { fetchCounterpartyIdentity, lockDeal, parseEscrowProposal, proposeDeal } from '../api';
+import { fetchCounterpartyIdentity, lockDeal, normalizeAgentBaseUrl, parseEscrowProposal, proposeDeal } from '../api';
 import type { AgentRole, IncotermRule, LockDealParams, ProposeDealParams } from '../types';
 
 type Mode = 'propose' | 'lock';
@@ -39,7 +39,10 @@ const FetchIdentityButton: React.FC<{
     setError(null);
     try {
       const { hex, did } = await fetchCounterpartyIdentity(url, which);
-      onFetched(hex, did, url);
+      // Store the normalized (schemed) form, not whatever bare host/domain the operator typed —
+      // this is reused later for automatic agent-to-agent delivery (tryDeliverOfferToBuyer),
+      // which needs a real, complete URL, not a bare "host:port" fetch() can't resolve on its own.
+      onFetched(hex, did, normalizeAgentBaseUrl(url));
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -51,7 +54,7 @@ const FetchIdentityButton: React.FC<{
     <div className="fetch-identity">
       <input
         type="text"
-        placeholder="http://their-agent-host:port"
+        placeholder="their-agent-host:port (http:// assumed if omitted)"
         value={url}
         onChange={(e) => setUrl(e.target.value)}
       />
