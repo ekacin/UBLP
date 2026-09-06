@@ -152,6 +152,17 @@ export async function fetchCounterpartyIdentity(
   agentBaseUrl: string,
   which: 'port-authority-key-hash' | 'memo-public-key'
 ): Promise<{ hex: string; did: string }> {
+  // A DID (e.g. "did:ublp:buyer:...") is the counterparty's IDENTITY, not their agent's network
+  // ADDRESS — this field wants the latter, since it's exactly what fetches the former. A DID
+  // typed here produces an unparseable URL ("http://did:...") whose native browser error gives
+  // no hint what actually went wrong, so catch the mix-up explicitly with a message that does.
+  if (/^did:/i.test(agentBaseUrl.trim())) {
+    throw new Error(
+      `This field wants the counterparty's agent URL (e.g. http://host:port), not their DID. ` +
+        `The DID is what Fetch looks up for you — it fills in automatically once you enter the ` +
+        `correct URL and click Fetch.`
+    );
+  }
   const res = await fetch(`${normalizeAgentBaseUrl(agentBaseUrl).replace(/\/$/, '')}/identity/${which}`);
   const text = await res.text();
   const json = text ? JSON.parse(text) : undefined;
