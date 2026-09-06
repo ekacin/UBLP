@@ -239,6 +239,13 @@ jobs:
           echo "::error::Devnet did not become healthy in time"
           exit 1
 
+      # buildAgentWallet's loadAgentMnemonic deliberately refuses to auto-generate a missing
+      # role secret (see deploy/wallet.ts) — generate-test-accounts.ts must create all three
+      # roles' encrypted mnemonics before anything else touches .devnet-secrets/.
+      - name: Generate buyer/seller/port-authority test wallets
+        working-directory: modules/incoterms-escrow
+        run: npx tsx scripts/devnet/generate-test-accounts.ts
+
       # full-lifecycle.ts self-funds the buyer's SHIELDED balance from the genesis wallet, but
       # assumes all three roles already have spendable DUST (unshielded NIGHT registered for
       # fee generation) to submit their own propose/lockEscrow/attestMilestone/claimPayout
