@@ -17,7 +17,7 @@ export interface WhoAmI {
   network: string;
 }
 
-export type IncotermRule = 'FOB' | string;
+export type IncotermRule = 'EXW' | 'FCA' | 'CPT' | 'CIP' | 'DAP' | 'DPU' | 'DDP' | 'FAS' | 'FOB' | 'CFR' | 'CIF';
 
 export interface EscrowTerms {
   shipmentId: string;

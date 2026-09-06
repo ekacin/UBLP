@@ -10,10 +10,13 @@ import { sha256Hash, signDocument, verifySignature } from '@ublp/shared';
 import type { ShipmentId, UBLPDid } from '@ublp/shared';
 
 /**
- * v0.1 implements FOB only (see AGENTS.md 5.2 — incremental build order). The other 10
- * rules will extend this union later.
+ * All 11 Incoterms 2020 rules. Every rule shares the same on-chain mechanism — one attested
+ * milestone releases the escrow, `releaseOnTimeout` is the safety net if it never comes — so
+ * this is purely a descriptive/off-chain label (see `src/policies/`): it travels through
+ * `EscrowTerms`, gets signed same as `amount`/the DIDs, and is displayed as-is throughout the
+ * panel, but the contract itself never branches on its value.
  */
-export type IncotermRule = 'FOB';
+export type IncotermRule = 'EXW' | 'FCA' | 'CPT' | 'CIP' | 'DAP' | 'DPU' | 'DDP' | 'FAS' | 'FOB' | 'CFR' | 'CIF';
 
 export interface EscrowTerms {
   shipmentId: ShipmentId;

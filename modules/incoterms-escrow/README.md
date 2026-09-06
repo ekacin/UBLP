@@ -1,14 +1,19 @@
 # Incoterms Escrow
 
-> **Status: v0.1, not production-ready.** This is an early-stage reference implementation —
-> FOB only, no external security audit, and several hardening items (see
-> [Current scope](#current-scope) and [Security notes](#security-notes)) are still open. Do not
-> move real funds with it yet.
+> **Status: v0.1, not production-ready.** This is an early-stage reference implementation — no
+> external security audit, and several hardening items (see [Current scope](#current-scope) and
+> [Security notes](#security-notes)) are still open. Do not move real funds with it yet.
 
 `@ublp/incoterms-escrow` is a Midnight Network smart-contract escrow system for settling
-international trade deals under [Incoterms](https://iccwbo.org/business-solutions/incoterms-rules/)
-rules. The current release implements **FOB (Free on Board)**; the same state machine and
-policy pattern are designed to extend to the remaining Incoterms rules incrementally.
+international trade deals under [Incoterms 2020](https://iccwbo.org/business-solutions/incoterms-rules/)
+rules. It supports all 11 Incoterms 2020 rules — EXW, FCA, CPT, CIP, DAP, DPU, DDP, FAS, FOB,
+CFR, and CIF — through one shared escrow state machine: every rule ultimately reduces to "one
+agreed party attests that a milestone happened, then the seller gets paid, with a timeout
+safety net if that attestation never comes." What differs between the 11 rules is *which*
+real-world milestone that is and *who* plays the attesting role — that's captured per rule in
+`src/policies/`, not by branching the contract itself. See [How a deal works](#how-a-deal-works)
+for the mechanism and [Choosing an Incoterm rule](#choosing-an-incoterm-rule) for what each rule
+actually means here.
 
 Funds and deal terms move through a Compact smart contract on Midnight, so amounts and payout
 addresses are never written to the chain in plaintext — only zero-knowledge commitments are.
@@ -24,22 +29,67 @@ A deal has three parties and moves through four states:
 Empty -> Proposed -> Locked -> Released
 ```
 
-- **Seller** creates the offer (`propose`), fixing the terms — amount, deadline, and the
-  identity of the party who will confirm loading.
+- **Seller** creates the offer (`propose`), fixing the terms — amount, deadline, the chosen
+  Incoterm rule, and the identity of the party who will confirm that rule's milestone.
 - **Buyer** reviews the offer and locks funds into the contract (`lockEscrow`). Locking is a
   precondition for shipping to start, not a step that happens afterward.
-- **Port authority** (or any neutral party acting as the "C" role) confirms loading took place
-  (`attestLoadingConfirmed`). This call proves only the caller's own identity — it never touches
-  financial data, by design.
-- Once loading is confirmed, anyone can trigger `claimPayout` to release funds to the seller (in
-  practice the seller's own agent does this automatically).
-- If the port authority never attests, `releaseOnTimeout` acts as a safety net once the deadline
-  passes, paying out to whichever party was designated at proposal time — this call is
-  deliberately unauthenticated, since a stuck deal must always be resolvable by someone.
+- **"C"** — the role the code and panel label `port-authority`, whoever that actually is for
+  this deal — confirms the milestone happened (`attestLoadingConfirmed`). This call proves only
+  the caller's own identity — it never touches financial data, by design. The circuit name is a
+  holdover from FOB (the first rule implemented) but the check itself is generic: it just
+  verifies the caller's key against whichever DID was nominated as "C" at proposal time, so the
+  same call works whether "C" is a maritime terminal (FOB/FAS/CFR/CIF), a carrier (FCA/CPT/CIP),
+  or a destination-side warehouse (DAP/DPU/DDP). See
+  [Choosing an Incoterm rule](#choosing-an-incoterm-rule) for who that should be per rule.
+- Once that milestone is confirmed, anyone can trigger `claimPayout` to release funds to the
+  seller (in practice the seller's own agent does this automatically).
+- If "C" never attests, `releaseOnTimeout` acts as a safety net once the deadline passes, paying
+  out to whichever party was designated at proposal time — this call is deliberately
+  unauthenticated, since a stuck deal must always be resolvable by someone.
 
 Two independent commitment patterns keep the deal private on-chain: fund custody is shielded
 (the coin amount is never in plaintext on the ledger — only a commitment hash is), and payout
 addresses are likewise never written directly, only committed to and checked at release time.
+
+## Choosing an Incoterm rule
+
+The panel's "New deal" form lets the seller pick any of the 11 rules; whichever one is chosen
+is signed into the deal's terms and shown as-is everywhere the deal appears (pending queue,
+incoming offers, deal status). The contract's behavior is identical no matter which rule is
+picked — what actually changes per rule is which real-world event counts as the milestone, and
+who should realistically be trusted to attest it:
+
+| Rule | Milestone (risk transfer point) | Typical "C" |
+|---|---|---|
+| EXW | Goods placed at buyer's disposal at seller's premises | The buyer's own nominated carrier — see the note below |
+| FCA | Goods handed to the carrier nominated by the buyer | That carrier, or a terminal at the named place |
+| CPT | Same as FCA (seller additionally pays carriage to destination) | Same as FCA |
+| CIP | Same as FCA (seller additionally pays carriage + insurance) | Same as FCA |
+| DAP | Goods arrive, ready for unloading, at the named destination | A destination-side terminal or warehouse |
+| DPU | Goods are unloaded at the named destination | A destination-side terminal or warehouse |
+| DDP | Goods delivered, import duty paid, at the named destination | See the note below |
+| FAS | Goods placed alongside the vessel at the port of shipment | A loading-port terminal/quay operator |
+| FOB | Goods loaded on board the vessel at the port of shipment | A loading-port terminal operator |
+| CFR | Same as FOB (seller additionally pays freight to destination) | Same as FOB |
+| CIF | Same as FOB (seller additionally pays freight + insurance) | Same as FOB |
+
+Two rules are worth a second look before using them:
+
+- **EXW** has no natural independent third party at the transfer point — unlike the others, the
+  realistic attester is aligned with the buyer (their own nominated carrier), not neutral.
+  Choose who plays "C" deliberately for an EXW deal.
+- **DDP** technically involves an import customs clearance, which is its own well-defined domain
+  (UBLP's separate `zk-customs` module handles exactly that). This escrow's DDP support is
+  deliberately simplified to the same single-attestation model as every other rule — it does
+  **not** require or integrate with `zk-customs` — so DDP works standalone rather than depending
+  on a separate module's maturity. A tighter integration is a possible future direction, not a
+  current dependency.
+
+This escrow does not model cost allocation (who pays freight/insurance) or customs
+responsibility at all — it only custodies a single agreed amount and releases it on one
+attested milestone. The rules that only differ from another rule by cost allocation (CPT/CIP
+vs. FCA, CFR/CIF vs. FOB) are therefore mechanically identical here; the distinction matters for
+the parties' own commercial agreement, not for what this contract enforces.
 
 ## Architecture
 
@@ -85,7 +135,7 @@ contracts/            Compact source (Escrow.compact) and compiled output
 src/
   contract/            witnesses, memo encryption, contract-address helpers
   deploy/               network config, wallet construction, provider wiring
-  policies/             per-Incoterm-rule policy logic (fob.ts today)
+  policies/             per-Incoterm-rule policy logic — one file per rule, all 11 covered
   server/               HTTP routes, auth, identity, db, deal watcher
 scripts/
   devnet/               local devnet helpers: deploy, fund wallets, full lifecycle runs
@@ -261,8 +311,9 @@ Panel build-time variable:
 npm test -w @ublp/incoterms-escrow
 ```
 
-Covers the contract's core logic, witness behavior, the FOB policy, encrypted-memo
-round-tripping, and the settlement agent's server-side pieces (auth, db, deal policy, identity).
+Covers the contract's core logic, witness behavior, all 11 Incoterm rule policies,
+encrypted-memo round-tripping, and the settlement agent's server-side pieces (auth, db, deal
+policy, identity).
 
 ## Cryptography
 
@@ -325,8 +376,8 @@ data — it rides along with the transaction itself.
 
 ## Current scope
 
-v0.1 implements the FOB Incoterm rule only, against a local devnet — it has not been run
-against a public Midnight network or audited. The contract's state machine and the settlement
-agent's policy layer (`src/policies/`) are structured so the remaining Incoterms rules can be
-added incrementally following the same pattern. Treat this repository as a reference
+v0.1 supports all 11 Incoterms 2020 rules, but only against a local devnet — it has not been
+run against a public Midnight network or audited, and this escrow deliberately doesn't model
+cost allocation (freight/insurance) or customs responsibility (see
+[Choosing an Incoterm rule](#choosing-an-incoterm-rule)). Treat this repository as a reference
 implementation to build on, not as something to point at real trade flows yet.

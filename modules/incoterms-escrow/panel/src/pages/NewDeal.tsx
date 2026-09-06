@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { fetchCounterpartyIdentity, lockDeal, parseEscrowProposal, proposeDeal } from '../api';
-import type { AgentRole, LockDealParams, ProposeDealParams } from '../types';
+import type { AgentRole, IncotermRule, LockDealParams, ProposeDealParams } from '../types';
 
 type Mode = 'propose' | 'lock';
 
@@ -150,8 +150,22 @@ const ProposeForm: React.FC<{ onCreated: () => void }> = ({ onCreated }) => {
 
       <label>
         Incoterm
-        <select value={form.incoterm} onChange={(e) => set('incoterm', e.target.value)}>
-          <option value="FOB">FOB</option>
+        <select value={form.incoterm} onChange={(e) => set('incoterm', e.target.value as IncotermRule)}>
+          <optgroup label="Any mode of transport">
+            <option value="EXW">EXW — Ex Works</option>
+            <option value="FCA">FCA — Free Carrier</option>
+            <option value="CPT">CPT — Carriage Paid To</option>
+            <option value="CIP">CIP — Carriage and Insurance Paid To</option>
+            <option value="DAP">DAP — Delivered at Place</option>
+            <option value="DPU">DPU — Delivered at Place Unloaded</option>
+            <option value="DDP">DDP — Delivered Duty Paid</option>
+          </optgroup>
+          <optgroup label="Sea and inland waterway transport">
+            <option value="FAS">FAS — Free Alongside Ship</option>
+            <option value="FOB">FOB — Free on Board</option>
+            <option value="CFR">CFR — Cost and Freight</option>
+            <option value="CIF">CIF — Cost, Insurance and Freight</option>
+          </optgroup>
         </select>
       </label>
       <label>

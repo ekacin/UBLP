@@ -10,9 +10,11 @@ interface StepperProps {
 const STEPS = ['Proposed', 'Funds locked', 'Loading confirmed', 'Released'];
 
 /** Maps the contract's actual state machine (types.ts's ESCROW_STATE_LABELS + the separate
- * loadingConfirmed flag) onto 4 visual milestones — unlike a generic Incoterm-rule stepper,
- * this IS the real domain model (v0.1 only implements FOB, so there's no separate "which rule's
- * milestone is this" abstraction to layer on top, see AGENTS.md 5.2). */
+ * loadingConfirmed flag) onto 4 visual milestones. The label stays "Loading confirmed"
+ * regardless of which Incoterm rule the deal actually uses — Escrow.compact's attest circuit
+ * is one generic "C attests, then payout" mechanism with no rule-specific branching (see
+ * AGENTS.md 5.2/5.14.1), so there's no real per-rule milestone name to surface here without
+ * inventing one; the deal's actual rule is shown separately via `terms.incoterm`. */
 const Stepper: React.FC<StepperProps> = ({ state, loadingConfirmed, expired }) => {
   const done = [state >= 1, state >= 2, state >= 2 && loadingConfirmed, state === 3];
   const stuck = state === 2 && !loadingConfirmed && expired;
