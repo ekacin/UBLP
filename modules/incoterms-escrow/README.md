@@ -149,8 +149,8 @@ tests/                 unit and integration tests (Vitest)
   with `-w @ublp/incoterms-escrow`)
 - The [Compact compiler](https://docs.midnight.network/relnotes/compact) on your `PATH`, for
   `npm run compile:contract`
-- A running Midnight devnet (e.g. via `midnight-local-dev`) and a local proof server for local
-  development — see `src/deploy/networks.ts` for the exact endpoints expected
+- Docker, for the local devnet (node + indexer + proof server) started in step 0 below — see
+  `src/deploy/networks.ts` for the exact endpoints expected
 
 ## Getting started (local devnet)
 
