@@ -63,12 +63,12 @@ const DealStatus: React.FC<DealStatusProps> = ({ contractAddress, role, onClose 
   };
 
   const expired = !!status && status.deadlineTimestamp > 0 && now > status.deadlineTimestamp * 1000;
-  const canAttest = role === 'port-authority' && status?.state === 2 && !status.loadingConfirmed;
-  const canClaim = role === 'seller' && status?.state === 2 && status.loadingConfirmed;
+  const canAttest = role === 'port-authority' && status?.state === 2 && !status.milestoneConfirmed;
+  const canClaim = role === 'seller' && status?.state === 2 && status.milestoneConfirmed;
   const canReleaseTimeout =
     !!status &&
     status.state === 2 &&
-    !status.loadingConfirmed &&
+    !status.milestoneConfirmed &&
     expired &&
     ((role === 'buyer' && status.timeoutDirection === 'buyer') || (role === 'seller' && status.timeoutDirection === 'seller'));
 
@@ -105,7 +105,7 @@ const DealStatus: React.FC<DealStatusProps> = ({ contractAddress, role, onClose 
           </p>
         )}
 
-        {status && <Stepper state={status.state} loadingConfirmed={status.loadingConfirmed} expired={expired} />}
+        {status && <Stepper state={status.state} milestoneConfirmed={status.milestoneConfirmed} expired={expired} />}
 
         {status && (
           <dl className="status-grid">
@@ -115,12 +115,12 @@ const DealStatus: React.FC<DealStatusProps> = ({ contractAddress, role, onClose 
                 {ESCROW_STATE_LABELS[status.state] ?? status.state}
               </span>
             </dd>
-            <dt>Loading confirmed by port authority</dt>
-            <dd>{status.loadingConfirmed ? 'Yes' : 'Not yet'}</dd>
+            <dt>Milestone confirmed by C</dt>
+            <dd>{status.milestoneConfirmed ? 'Yes' : 'Not yet'}</dd>
             <dt>Deadline</dt>
             <dd>
               {status.deadlineTimestamp > 0 ? new Date(status.deadlineTimestamp * 1000).toLocaleString() : '(not locked yet)'}
-              {expired && status.state === 2 && !status.loadingConfirmed && ' — passed'}
+              {expired && status.state === 2 && !status.milestoneConfirmed && ' — passed'}
             </dd>
             <dt>Timeout pays out to</dt>
             <dd>{status.timeoutDirection}</dd>
@@ -134,9 +134,9 @@ const DealStatus: React.FC<DealStatusProps> = ({ contractAddress, role, onClose 
                 type="button"
                 className="btn btn-primary"
                 disabled={busy !== null}
-                onClick={() => runAction('Confirming loading…', () => attestDeal(contractAddress))}
+                onClick={() => runAction('Confirming milestone…', () => attestDeal(contractAddress))}
               >
-                Confirm loading completed
+                Confirm milestone completed
               </button>
             )}
             {canClaim && (

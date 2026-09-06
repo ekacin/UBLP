@@ -1,7 +1,8 @@
 // UBLP Module 4 — INCOTERMS Settlement (Escrow). See AGENTS.md Section 5.
 //
-// v0.1 scope: FOB only (Section 5.2). The other 10 rules will be added incrementally
-// following the same pattern.
+// Supports all 11 Incoterms 2020 rules (Section 5.2) through one shared state machine — a rule
+// only changes which real-world event counts as the milestone below and who attests it
+// (src/policies/), not the contract itself.
 //
 // State machine: Empty -> Proposed -> Locked -> Released
 //   - Proposed: seller "creates the offer" (Section 5.12 step 1) — fixes the terms,
@@ -10,8 +11,8 @@
 //     for shipping to start (Section 7.5), not a step that happens afterward.
 //   - Released: point (c) triggers payout in TWO SEPARATE circuits (see AGENTS.md 5.14.1,
 //     "don't give C data irrelevant to its job"):
-//       1. `attestLoadingConfirmed` — callable only by C, proves only C's own identity.
-//          C's role stops there — it never touches financial data (least privilege).
+//       1. `attestMilestone` — callable only by C, proves only C's own identity. C's role
+//          stops there — it never touches financial data (least privilege).
 //       2. `claimPayout` — callable by anyone once attested (in practice the seller's own
 //          agent, since it wants the funds); verifies the coin/address commitments and pays.
 //     The 7-day timeout (Section 7.2) is a separate safety net that releases to the seller
@@ -66,10 +67,13 @@ export ledger durationSeconds: Uint<64>;
 export ledger deadlineTimestamp: Uint<64>;
 export ledger timeoutDirection: TimeoutDirection; // Section 5.19 — who releaseOnTimeout pays
 
-// C's attestation — a single flag carrying no financial data. Exported so the seller's
+// C's attestation — a single flag carrying no financial data. Rule-agnostic on purpose: the
+// same flag serves every Incoterm rule's own milestone (loaded on board, handed to carrier,
+// arrived at destination, ...) — which real-world event it stands for is an off-chain policy
+// concern (src/policies/), not something this contract branches on. Exported so the seller's
 // agent can watch it via the indexer and auto-trigger claimPayout (Section 5.14.1's
 // "push the burden onto the system" principle).
-export ledger loadingConfirmed: Boolean;
+export ledger milestoneConfirmed: Boolean;
 
 // Neither is exported — only commitment hashes. Neither the amount nor the buyer/seller
 // address ever reaches the chain in plaintext (see privacy note above).
@@ -197,20 +201,20 @@ export circuit lockEscrow(claimedLockTime: Uint<64>): [] {
   state = EscrowState.Locked;
 }
 
-export circuit attestLoadingConfirmed(): [] {
+export circuit attestMilestone(): [] {
   assert(state == EscrowState.Locked, "escrow not locked");
-  assert(!loadingConfirmed, "loading already confirmed");
+  assert(!milestoneConfirmed, "milestone already confirmed");
   const sk = portAuthoritySecretKey();
   assert(
     roleKeyHash(sk, pad(32, "incoterms-escrow:port-auth:v1")) == portAuthorityKeyHash,
     "caller is not the designated port authority (C) for this escrow"
   );
-  loadingConfirmed = true;
+  milestoneConfirmed = true;
 }
 
 export circuit claimPayout(): [] {
   assert(state == EscrowState.Locked, "escrow not locked");
-  assert(loadingConfirmed, "loading not yet confirmed by port authority");
+  assert(milestoneConfirmed, "milestone not yet confirmed by C");
   payOutToSeller();
 }
 

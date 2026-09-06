@@ -236,7 +236,7 @@ async function main(): Promise<void> {
     let released = false;
     for (let attempt = 0; attempt < 30; attempt++) {
       const status = await api(seller, 'GET', `/deals/${contractAddress}/status`);
-      console.log(`  poll ${attempt}: state=${status.state} (expect 3=Released), loadingConfirmed=${status.loadingConfirmed}`);
+      console.log(`  poll ${attempt}: state=${status.state} (expect 3=Released), milestoneConfirmed=${status.milestoneConfirmed}`);
       if (status.state === 3) {
         released = true;
         break;

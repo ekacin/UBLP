@@ -218,7 +218,7 @@ async function main(): Promise<void> {
     await contract.callTx.claimPayout();
   });
 
-  await expectRejected('attestLoadingConfirmed() with the wrong port-authority secret key', async () => {
+  await expectRejected('attestMilestone() with the wrong port-authority secret key', async () => {
     const wrongState: EscrowPrivateState = {
       ...emptyEscrowPrivateState,
       portAuthoritySecretKey: wrongPortAuthoritySecretKey,
@@ -229,7 +229,7 @@ async function main(): Promise<void> {
       privateStateId: EscrowPrivateStateId,
       initialPrivateState: wrongState,
     });
-    await contract.callTx.attestLoadingConfirmed();
+    await contract.callTx.attestMilestone();
   });
 
   await expectRejected('releaseOnTimeout() before the deadline has passed', async () => {
@@ -250,7 +250,7 @@ async function main(): Promise<void> {
     await contract.callTx.releaseOnTimeout();
   });
 
-  console.log('\n[4] Real attestLoadingConfirmed() (needed to test double-attest)...');
+  console.log('\n[4] Real attestMilestone() (needed to test double-attest)...');
   const realPortAuthorityState: EscrowPrivateState = { ...emptyEscrowPrivateState, portAuthoritySecretKey };
   await portAuthorityProviders.privateStateProvider.set(EscrowPrivateStateId, realPortAuthorityState);
   const portAuthorityContract = await findDeployedContract(portAuthorityProviders, {
@@ -259,19 +259,19 @@ async function main(): Promise<void> {
     privateStateId: EscrowPrivateStateId,
     initialPrivateState: realPortAuthorityState,
   });
-  await portAuthorityContract.callTx.attestLoadingConfirmed();
+  await portAuthorityContract.callTx.attestMilestone();
   const stateAfterAttest = ledger((await portAuthorityProviders.publicDataProvider.queryContractState(contractAddress))!.data);
-  console.log(`  loadingConfirmed after attest: ${stateAfterAttest.loadingConfirmed} (expect true)`);
+  console.log(`  milestoneConfirmed after attest: ${stateAfterAttest.milestoneConfirmed} (expect true)`);
 
   console.log('\n[5] Guard against re-attestation:');
-  await expectRejected('attestLoadingConfirmed() a second time (already confirmed)', async () => {
+  await expectRejected('attestMilestone() a second time (already confirmed)', async () => {
     const contract = await findDeployedContract(portAuthorityProviders, {
       contractAddress,
       compiledContract: compiledEscrowContract,
       privateStateId: EscrowPrivateStateId,
       initialPrivateState: realPortAuthorityState,
     });
-    await contract.callTx.attestLoadingConfirmed();
+    await contract.callTx.attestMilestone();
   });
 
   await closeAgentWallet(seller);

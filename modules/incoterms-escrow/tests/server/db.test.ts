@@ -63,7 +63,7 @@ describe('pending_actions', () => {
     expect(findInFlightAction(db, 'deal-2', 'lockEscrow')).toBeNull();
 
     // Different action name on the same deal shouldn't match.
-    createPendingAction(db, { dealRef: 'deal-2', action: 'attestLoadingConfirmed', requestedBy: 'op', payload: {} });
+    createPendingAction(db, { dealRef: 'deal-2', action: 'attestMilestone', requestedBy: 'op', payload: {} });
     expect(findInFlightAction(db, 'deal-2', 'lockEscrow')).toBeNull();
   });
 

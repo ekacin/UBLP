@@ -1,6 +1,6 @@
 /**
  * Task 17 (AGENTS.md 5.23): drives Escrow.compact through its full happy-path
- * state machine — propose -> lockEscrow -> attestLoadingConfirmed -> claimPayout — against
+ * state machine — propose -> lockEscrow -> attestMilestone -> claimPayout — against
  * the real local devnet, with three separate real wallets (buyer/seller/port-authority),
  * real ZK proofs, and a real shielded coin actually moving on-chain.
  *
@@ -155,7 +155,7 @@ async function main(): Promise<void> {
   });
 
   // --- Step 2: port authority attests loading confirmed ---
-  console.log('\n[2] Port authority calling attestLoadingConfirmed()...');
+  console.log('\n[2] Port authority calling attestMilestone()...');
   const portAuthorityProviders = buildEscrowProviders(portAuthority.midnightWalletProvider, network, portAuthority.role);
   const portAuthorityPrivateState: EscrowPrivateState = {
     ...emptyEscrowPrivateState,
@@ -167,10 +167,10 @@ async function main(): Promise<void> {
     privateStateId: EscrowPrivateStateId,
     initialPrivateState: portAuthorityPrivateState,
   });
-  const attestResult = await portAuthorityContract.callTx.attestLoadingConfirmed();
+  const attestResult = await portAuthorityContract.callTx.attestMilestone();
   const stateAfterAttest = ledger((await portAuthorityProviders.publicDataProvider.queryContractState(contractAddress))!.data);
-  console.log(`  loadingConfirmed after attest: ${stateAfterAttest.loadingConfirmed} (expect true)`);
-  logEscrowAction(txLog, contractAddress, 'attestLoadingConfirmed', { txId: attestResult.public.txId });
+  console.log(`  milestoneConfirmed after attest: ${stateAfterAttest.milestoneConfirmed} (expect true)`);
+  logEscrowAction(txLog, contractAddress, 'attestMilestone', { txId: attestResult.public.txId });
 
   // --- Step 3: seller recovers the deposited coin from buyerMemo (NOT copied out-of-band —
   // this is the real dual-recipient-memo recovery path, Section 5.18) and claims payout ---

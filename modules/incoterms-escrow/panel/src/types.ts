@@ -93,7 +93,7 @@ export const ESCROW_STATE_LABELS = ['Empty', 'Proposed', 'Locked', 'Released'] a
 export interface DealStatus {
   contractAddress: string;
   state: number; // index into ESCROW_STATE_LABELS
-  loadingConfirmed: boolean;
+  milestoneConfirmed: boolean;
   deadlineTimestamp: number;
   timeoutDirection: 'buyer' | 'seller';
   /** This company's own bookkeeping for this deal — never the chain, which never stores the

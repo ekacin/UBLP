@@ -409,11 +409,11 @@ export async function lockDeal(ctx: AgentContext, params: LockDealParams): Promi
   return { txId: result.public.txId };
 }
 
-// ---- attestLoadingConfirmed (port-authority only) ----
+// ---- attestMilestone (port-authority only) ----
 
 export async function attestDeal(ctx: AgentContext, contractAddress: string): Promise<{ txId: string }> {
   if (ctx.role !== 'port-authority') {
-    throw new Error('attestLoadingConfirmed() is only callable by the port-authority role.');
+    throw new Error('attestMilestone() is only callable by the port-authority role.');
   }
   if (!ctx.identity.roleSecretKeyHex) throw new Error('Port-authority identity is missing its role secret key.');
 
@@ -427,8 +427,8 @@ export async function attestDeal(ctx: AgentContext, contractAddress: string): Pr
     privateStateId: EscrowPrivateStateId,
     initialPrivateState: privateState,
   });
-  const result = await contract.callTx.attestLoadingConfirmed();
-  logAction(ctx, contractAddress, 'attestLoadingConfirmed', { txId: result.public.txId });
+  const result = await contract.callTx.attestMilestone();
+  logAction(ctx, contractAddress, 'attestMilestone', { txId: result.public.txId });
   return { txId: result.public.txId };
 }
 
@@ -515,7 +515,7 @@ export async function releaseTimeoutDeal(ctx: AgentContext, contractAddress: str
 export interface DealStatus {
   contractAddress: string;
   state: number; // Escrow.compact's EscrowState enum ordinal (0 Empty..3 Released)
-  loadingConfirmed: boolean;
+  milestoneConfirmed: boolean;
   deadlineTimestamp: number; // unix seconds
   timeoutDirection: 'buyer' | 'seller';
   /**
@@ -540,7 +540,7 @@ export async function getDealStatus(ctx: AgentContext, contractAddress: string):
   return {
     contractAddress,
     state: Number(state.state),
-    loadingConfirmed: state.loadingConfirmed,
+    milestoneConfirmed: state.milestoneConfirmed,
     deadlineTimestamp: Number(state.deadlineTimestamp),
     timeoutDirection: Number(state.timeoutDirection) === 0 ? 'buyer' : 'seller',
     ownRecord,

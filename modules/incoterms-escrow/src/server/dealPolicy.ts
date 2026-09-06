@@ -17,7 +17,7 @@ const LOCKED_STATE = 2; // Escrow.compact's EscrowState.Locked ordinal
  * only while the deal is still Locked (already-Released means someone else got there first —
  * harmless, just nothing left to do). */
 export function shouldAutoClaimDeal(role: AgentRole, status: DealStatus): boolean {
-  return role === 'seller' && status.state === LOCKED_STATE && status.loadingConfirmed;
+  return role === 'seller' && status.state === LOCKED_STATE && status.milestoneConfirmed;
 }
 
 /** releaseOnTimeout's buyer-refund branch — the only direction actions.ts's releaseTimeoutDeal
@@ -29,7 +29,7 @@ export function shouldAutoReleaseTimeout(role: AgentRole, status: DealStatus, no
     role === 'buyer' &&
     status.timeoutDirection === 'buyer' &&
     status.state === LOCKED_STATE &&
-    !status.loadingConfirmed &&
+    !status.milestoneConfirmed &&
     nowSeconds >= status.deadlineTimestamp
   );
 }

@@ -3,7 +3,7 @@
  * data always comes from here (a witness), never as a plain circuit argument.
  *
  * ROLE SEPARATION (deliberate, least-privilege): whoever builds the proof for
- * `attestLoadingConfirmed` (C) only ever needs its own `portAuthoritySecretKey` — it never
+ * `attestMilestone` (C) only ever needs its own `portAuthoritySecretKey` — it never
  * touches the coin/address witnesses. Whoever builds `claimPayout` (in practice the seller's
  * own agent) needs the coin+salt (from the buyer) and its own address+salt — these can travel
  * over the existing buyer-seller negotiation channel (propose/accept); C is never involved.

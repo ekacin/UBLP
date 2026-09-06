@@ -30,7 +30,7 @@ export type PendingActionStatus = 'awaiting_approval' | 'approved' | 'submitted_
 export interface PendingAction {
   id: number;
   dealRef: string; // contract address, or a client-chosen temp id before deployment
-  action: string; // 'propose' | 'lockEscrow' | 'attestLoadingConfirmed' | 'claimPayout' | 'releaseOnTimeout'
+  action: string; // 'propose' | 'lockEscrow' | 'attestMilestone' | 'claimPayout' | 'releaseOnTimeout'
   status: PendingActionStatus;
   requestedBy: string; // login identity public key (PEM) of whoever queued it
   payload: Record<string, unknown>; // action-specific parameters, JSON

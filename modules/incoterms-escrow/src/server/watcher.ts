@@ -13,7 +13,7 @@
  * (a handful of concurrently open deals per company, not thousands), this is deliberately the
  * simplest thing that works — no job queue, no distributed locking.
  *
- * Deliberately does NOTHING for the port-authority role: attestLoadingConfirmed requires a
+ * Deliberately does NOTHING for the port-authority role: attestMilestone requires a
  * real physical observation (the oracle-problem boundary discussed alongside AGENTS.md
  * Section 6's Module 3 note) — it is the one action in this system that must never be
  * automated, so there is nothing for this role's watcher to do.

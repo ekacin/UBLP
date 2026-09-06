@@ -166,7 +166,7 @@ async function main(): Promise<void> {
   const releaseResult = await buyerReleaseContract.callTx.releaseOnTimeout();
   const stateAfterRelease = ledger((await buyerProviders.publicDataProvider.queryContractState(contractAddress))!.data);
   console.log(`  state after releaseOnTimeout(): ${stateAfterRelease.state} (expect 3=Released)`);
-  console.log(`  loadingConfirmed: ${stateAfterRelease.loadingConfirmed} (expect false — C never attested)`);
+  console.log(`  milestoneConfirmed: ${stateAfterRelease.milestoneConfirmed} (expect false — C never attested)`);
 
   const buyerBalanceAfter: any = await Rx.firstValueFrom(buyer.wallet.state());
   const shieldedAfter: bigint = buyerBalanceAfter.shielded?.balances?.[shieldedToken().raw] ?? 0n;

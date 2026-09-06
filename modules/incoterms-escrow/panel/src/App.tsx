@@ -22,7 +22,7 @@ const App: React.FC = () => {
   const { identity } = useWhoAmI(status === 'authenticated', activeBaseUrl);
   const [viewingDeal, setViewingDeal] = useState<string | null>(null);
   // Sellers/buyers land on their approval queue; a port-authority agent never has anything to
-  // approve (it only ever calls attestLoadingConfirmed, an immediate action — see routes.ts's
+  // approve (it only ever calls attestMilestone, an immediate action — see routes.ts's
   // header), so its natural home is opening a deal directly by contract address instead.
   const [view, setView] = useState<View | null>(null);
   const effectiveView: View = view ?? (identity?.role === 'port-authority' ? 'openDeal' : 'queue');

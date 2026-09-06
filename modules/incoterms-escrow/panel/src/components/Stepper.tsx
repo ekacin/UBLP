@@ -3,21 +3,22 @@ import React from 'react';
 interface StepperProps {
   /** ESCROW_STATE_LABELS index: 0 Empty, 1 Proposed, 2 Locked, 3 Released. */
   state: number;
-  loadingConfirmed: boolean;
+  milestoneConfirmed: boolean;
   expired: boolean;
 }
 
-const STEPS = ['Proposed', 'Funds locked', 'Loading confirmed', 'Released'];
+const STEPS = ['Proposed', 'Funds locked', 'Milestone confirmed', 'Released'];
 
 /** Maps the contract's actual state machine (types.ts's ESCROW_STATE_LABELS + the separate
- * loadingConfirmed flag) onto 4 visual milestones. The label stays "Loading confirmed"
- * regardless of which Incoterm rule the deal actually uses — Escrow.compact's attest circuit
- * is one generic "C attests, then payout" mechanism with no rule-specific branching (see
- * AGENTS.md 5.2/5.14.1), so there's no real per-rule milestone name to surface here without
- * inventing one; the deal's actual rule is shown separately via `terms.incoterm`. */
-const Stepper: React.FC<StepperProps> = ({ state, loadingConfirmed, expired }) => {
-  const done = [state >= 1, state >= 2, state >= 2 && loadingConfirmed, state === 3];
-  const stuck = state === 2 && !loadingConfirmed && expired;
+ * milestoneConfirmed flag) onto 4 visual milestones. The label stays generic ("Milestone
+ * confirmed") regardless of which Incoterm rule the deal actually uses — Escrow.compact's
+ * attest circuit is one generic "C attests, then payout" mechanism with no rule-specific
+ * branching (see AGENTS.md 5.2/5.14.1); which real-world event that milestone represents for
+ * this deal is shown separately via `terms.incoterm` (see README's "Choosing an Incoterm
+ * rule" table). */
+const Stepper: React.FC<StepperProps> = ({ state, milestoneConfirmed, expired }) => {
+  const done = [state >= 1, state >= 2, state >= 2 && milestoneConfirmed, state === 3];
+  const stuck = state === 2 && !milestoneConfirmed && expired;
   const current = state === 3 ? -1 : stuck ? 2 : done.findIndex((d) => !d);
 
   return (

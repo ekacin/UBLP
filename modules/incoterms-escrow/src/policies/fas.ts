@@ -5,7 +5,7 @@
  * quay or a barge) at the named port of shipment — one step earlier than FOB's "on board."
  * Mechanically identical to FOB/CFR/CIF's escrow flow: the same generic "C attests one
  * milestone, then payout" contract handles it (see Escrow.compact's own comment — the
- * `attestLoadingConfirmed` circuit only checks a role-key-hash, it has no maritime-specific
+ * `attestMilestone` circuit only checks a role-key-hash, it has no maritime-specific
  * logic), so this policy differs from `fob.ts` only in which claim it requires.
  */
 

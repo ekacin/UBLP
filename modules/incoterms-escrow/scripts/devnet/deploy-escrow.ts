@@ -60,7 +60,7 @@ async function main(): Promise<void> {
   const initialState = ledger(contractState.data);
   console.log('Initial ledger state:', {
     state: initialState.state,
-    loadingConfirmed: initialState.loadingConfirmed,
+    milestoneConfirmed: initialState.milestoneConfirmed,
   });
 
   // --- propose() sanity call ---
@@ -97,7 +97,7 @@ async function main(): Promise<void> {
   );
   console.log('Ledger state after propose():', {
     state: stateAfterPropose.state,
-    loadingConfirmed: stateAfterPropose.loadingConfirmed,
+    milestoneConfirmed: stateAfterPropose.milestoneConfirmed,
   });
 
   await closeAgentWallet(seller);

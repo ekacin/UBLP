@@ -9,7 +9,7 @@ function baseStatus(overrides: Partial<DealStatus> = {}): DealStatus {
   return {
     contractAddress: '0xdeal',
     state: LOCKED,
-    loadingConfirmed: false,
+    milestoneConfirmed: false,
     deadlineTimestamp: 1_000_000,
     timeoutDirection: 'buyer',
     ...overrides,
@@ -18,20 +18,20 @@ function baseStatus(overrides: Partial<DealStatus> = {}): DealStatus {
 
 describe('shouldAutoClaimDeal', () => {
   it('is true for the seller once C has attested on a Locked deal', () => {
-    expect(shouldAutoClaimDeal('seller', baseStatus({ loadingConfirmed: true }))).toBe(true);
+    expect(shouldAutoClaimDeal('seller', baseStatus({ milestoneConfirmed: true }))).toBe(true);
   });
 
   it('is false for the buyer or port-authority, even with a valid attestation', () => {
-    expect(shouldAutoClaimDeal('buyer', baseStatus({ loadingConfirmed: true }))).toBe(false);
-    expect(shouldAutoClaimDeal('port-authority', baseStatus({ loadingConfirmed: true }))).toBe(false);
+    expect(shouldAutoClaimDeal('buyer', baseStatus({ milestoneConfirmed: true }))).toBe(false);
+    expect(shouldAutoClaimDeal('port-authority', baseStatus({ milestoneConfirmed: true }))).toBe(false);
   });
 
   it('is false before C has attested', () => {
-    expect(shouldAutoClaimDeal('seller', baseStatus({ loadingConfirmed: false }))).toBe(false);
+    expect(shouldAutoClaimDeal('seller', baseStatus({ milestoneConfirmed: false }))).toBe(false);
   });
 
   it('is false once the deal has already moved past Locked (already Released)', () => {
-    expect(shouldAutoClaimDeal('seller', baseStatus({ loadingConfirmed: true, state: RELEASED }))).toBe(false);
+    expect(shouldAutoClaimDeal('seller', baseStatus({ milestoneConfirmed: true, state: RELEASED }))).toBe(false);
   });
 });
 
@@ -58,7 +58,7 @@ describe('shouldAutoReleaseTimeout', () => {
 
   it('is false once C has already attested, even past the deadline (claim should win, not refund)', () => {
     expect(
-      shouldAutoReleaseTimeout('buyer', baseStatus({ deadlineTimestamp: now - 1, loadingConfirmed: true }), now)
+      shouldAutoReleaseTimeout('buyer', baseStatus({ deadlineTimestamp: now - 1, milestoneConfirmed: true }), now)
     ).toBe(false);
   });
 
