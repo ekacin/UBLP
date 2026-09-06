@@ -104,6 +104,19 @@ tests/                 unit and integration tests (Vitest)
 
 ## Getting started (local devnet)
 
+0. **Start a local Midnight devnet.** This repository doesn't bundle one — pull the official
+   [`midnight-local-dev`](https://github.com/midnightntwrk/midnight-local-dev) tool separately
+   and bring up its three containers (node, indexer, proof server):
+   ```bash
+   git clone https://github.com/midnightntwrk/midnight-local-dev.git
+   cd midnight-local-dev
+   npm install
+   docker compose -f standalone.yml up -d
+   docker compose -f standalone.yml ps   # wait until all three report healthy
+   ```
+   This exposes `localhost:9944` (node), `localhost:8088` (indexer), and `localhost:6300`
+   (proof server) — exactly what `src/deploy/networks.ts` expects, no extra configuration
+   needed. Leave it running in the background; everything below assumes it's up.
 1. Compile the contract:
    ```bash
    npm run compile:contract -w @ublp/incoterms-escrow
@@ -115,6 +128,15 @@ tests/                 unit and integration tests (Vitest)
    npx tsx scripts/devnet/fund-agent-role.ts seller
    npx tsx scripts/devnet/fund-agent-role.ts port-authority
    ```
+   `generate-test-accounts.ts` always creates all three roles' wallets in one run — encrypted
+   copies land in `.devnet-secrets/{buyer,seller,port-authority}.json` (AES-256-GCM, decryptable
+   only with the same `DEVNET_WALLET_PASSPHRASE` the script was run with), but it **also** writes
+   `.devnet-secrets/accounts.json` in plaintext, containing every role's mnemonic words. That
+   plaintext copy exists so it can be fed straight into `midnight-local-dev`'s own `--fund-config`
+   option — it's the simplest way to read a generated mnemonic back if you need it (e.g. to import
+   into a wallet extension). This is only ever done for throwaway local-devnet test money; never
+   do this for a real deployment's secrets. Both files stay out of git (`.gitignore` excludes all
+   of `.devnet-secrets/`).
 3. Start a settlement agent per role (each needs its own terminal, port, and — for more than
    one role on one machine — its own `SETTLEMENT_SECRETS_DIR`/`SETTLEMENT_DATA_DIR`):
    ```bash
@@ -150,6 +172,66 @@ mistake:
 
 `scripts/devnet/fund-agent-role.ts <buyer|seller|port-authority>` funds a role's wallet with
 both in one step.
+
+## Running more than one role from the same company
+
+It's a common setup for one company to act as both buyer and seller across different deals
+(and, for local testing, to also run the port authority role itself, even though in a real deal
+that's a genuinely separate neutral party). Each role still needs to be its own isolated process
+with its own wallet, identity, and data store — the settlement agent enforces this by having
+every role write to the same default directories unless told otherwise, so co-located roles
+**must** be given distinct `SETTLEMENT_SECRETS_DIR`/`SETTLEMENT_DATA_DIR` values or they'll
+collide on the same files.
+
+Assuming the local devnet from [Getting started](#getting-started-local-devnet) is already up
+and steps 1–2 (compile, generate + fund all three wallets) are done, open three terminals:
+
+```bash
+# Terminal 1 — seller
+SETTLEMENT_ROLE=seller \
+SETTLEMENT_DID=did:ublp:seller:your-company \
+SETTLEMENT_PORT=4100 \
+SETTLEMENT_PASSPHRASE=change-me \
+SETTLEMENT_SECRETS_DIR=.settlement-secrets-seller \
+SETTLEMENT_DATA_DIR=data-seller \
+npm run start:settlement-agent -w @ublp/incoterms-escrow
+```
+
+```bash
+# Terminal 2 — buyer
+SETTLEMENT_ROLE=buyer \
+SETTLEMENT_DID=did:ublp:buyer:your-company \
+SETTLEMENT_PORT=4200 \
+SETTLEMENT_PASSPHRASE=change-me \
+SETTLEMENT_SECRETS_DIR=.settlement-secrets-buyer \
+SETTLEMENT_DATA_DIR=data-buyer \
+npm run start:settlement-agent -w @ublp/incoterms-escrow
+```
+
+```bash
+# Terminal 3 — port authority (a real deployment would have a separate company run this)
+SETTLEMENT_ROLE=port-authority \
+SETTLEMENT_DID=did:ublp:port-authority:test-authority \
+SETTLEMENT_PORT=4300 \
+SETTLEMENT_PASSPHRASE=change-me \
+SETTLEMENT_SECRETS_DIR=.settlement-secrets-portauth \
+SETTLEMENT_DATA_DIR=data-portauth \
+npm run start:settlement-agent -w @ublp/incoterms-escrow
+```
+
+Then start the panel (`VITE_NETWORK_ID=undeployed npm run dev -w @ublp/incoterms-escrow-panel`)
+and, in its instance switcher, add all three base URLs (`http://127.0.0.1:4100`, `:4200`,
+`:4300`) with distinct labels. Log into each with your wallet extension (set to the `undeployed`
+network) before using it.
+
+A full deal exercises every role in turn:
+
+1. **Seller** → "New deal", fill in the terms, approve — the offer is delivered automatically
+   and encrypted to the buyer's agent.
+2. **Buyer** → "Incoming offers", "Accept & Lock", approve (generates a real ZK proof, ~30–60s).
+3. **Port authority** → "Open deal", paste the contract address, "Confirm loading completed".
+4. **Seller**'s agent claims the payout automatically once the attestation lands — no manual step
+   needed; the deal's status moves to "Released".
 
 ## Configuration
 
