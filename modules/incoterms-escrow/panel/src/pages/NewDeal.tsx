@@ -95,61 +95,74 @@ const ProposeForm: React.FC<{ onCreated: () => void }> = ({ onCreated }) => {
         Shipment ID
         <input required value={form.shipmentId} onChange={(e) => set('shipmentId', e.target.value)} />
       </label>
-      <label>
-        Buyer DID
-        <input
-          required
-          placeholder="did:ublp:buyer:..."
-          value={form.buyerDid}
-          onChange={(e) => set('buyerDid', e.target.value)}
-        />
-      </label>
-      <label>
-        Port authority (C) DID
-        <input
-          required
-          placeholder="did:ublp:port-authority:..."
-          value={form.portAuthorityDid}
-          onChange={(e) => set('portAuthorityDid', e.target.value)}
-        />
-      </label>
-      <label>
-        Port authority's key hash
-        <input
-          required
-          placeholder="hex"
-          value={form.portAuthorityKeyHashHex}
-          onChange={(e) => set('portAuthorityKeyHashHex', e.target.value)}
-        />
-      </label>
-      <FetchIdentityButton
-        which="port-authority-key-hash"
-        onFetched={(hex, did) => {
-          set('portAuthorityKeyHashHex', hex);
-          set('portAuthorityDid', did);
-        }}
-      />
 
-      <label>
-        Buyer's memo public key
-        <input
-          required
-          placeholder="hex"
-          value={form.buyerMemoPublicKeyHex}
-          onChange={(e) => set('buyerMemoPublicKeyHex', e.target.value)}
+      <div className="form-section">
+        <h3 className="form-section-label">Buyer</h3>
+        <p className="form-section-hint">
+          1. Enter their agent's URL and click Fetch — 2. DID and memo key below fill in automatically.
+        </p>
+        <FetchIdentityButton
+          which="memo-public-key"
+          onFetched={(hex, did, agentUrl) => {
+            set('buyerMemoPublicKeyHex', hex);
+            set('buyerDid', did);
+            // Reused for automatic agent-to-agent delivery on approve (server/actions.ts's
+            // tryDeliverOfferToBuyer) — the operator already had to type this URL for the
+            // Fetch above, no reason to ask for it again.
+            set('buyerAgentUrl', agentUrl);
+          }}
         />
-      </label>
-      <FetchIdentityButton
-        which="memo-public-key"
-        onFetched={(hex, did, agentUrl) => {
-          set('buyerMemoPublicKeyHex', hex);
-          set('buyerDid', did);
-          // Reused for automatic agent-to-agent delivery on approve (server/actions.ts's
-          // tryDeliverOfferToBuyer) — the operator already had to type this URL for the
-          // Fetch above, no reason to ask for it again.
-          set('buyerAgentUrl', agentUrl);
-        }}
-      />
+        <label>
+          Buyer DID
+          <input
+            required
+            placeholder="did:ublp:buyer:..."
+            value={form.buyerDid}
+            onChange={(e) => set('buyerDid', e.target.value)}
+          />
+        </label>
+        <label>
+          Buyer's memo public key
+          <input
+            required
+            placeholder="hex"
+            value={form.buyerMemoPublicKeyHex}
+            onChange={(e) => set('buyerMemoPublicKeyHex', e.target.value)}
+          />
+        </label>
+      </div>
+
+      <div className="form-section">
+        <h3 className="form-section-label">Port authority (C)</h3>
+        <p className="form-section-hint">
+          1. Enter their agent's URL and click Fetch — 2. DID and key hash below fill in automatically.
+        </p>
+        <FetchIdentityButton
+          which="port-authority-key-hash"
+          onFetched={(hex, did) => {
+            set('portAuthorityKeyHashHex', hex);
+            set('portAuthorityDid', did);
+          }}
+        />
+        <label>
+          Port authority (C) DID
+          <input
+            required
+            placeholder="did:ublp:port-authority:..."
+            value={form.portAuthorityDid}
+            onChange={(e) => set('portAuthorityDid', e.target.value)}
+          />
+        </label>
+        <label>
+          Port authority's key hash
+          <input
+            required
+            placeholder="hex"
+            value={form.portAuthorityKeyHashHex}
+            onChange={(e) => set('portAuthorityKeyHashHex', e.target.value)}
+          />
+        </label>
+      </div>
 
       <label>
         Incoterm
