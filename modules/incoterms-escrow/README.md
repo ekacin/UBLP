@@ -51,6 +51,12 @@ Two independent commitment patterns keep the deal private on-chain: fund custody
 (the coin amount is never in plaintext on the ledger — only a commitment hash is), and payout
 addresses are likewise never written directly, only committed to and checked at release time.
 
+The panel's own deal status view mirrors this state machine directly — each milestone lights up
+as it's confirmed, and the seller's own private record (never written to the chain) shows the
+propose/claim amounts alongside it:
+
+![A completed deal, released to the seller after the port authority's attestation](docs/screenshots/deal-status-released.png)
+
 ## Choosing an Incoterm rule
 
 The panel's "New deal" form lets the seller pick any of the 11 rules; whichever one is chosen
