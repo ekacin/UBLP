@@ -31,4 +31,4 @@ npm run dev
 | **Efe Kaan Açin** | Architect, developer |
 ---
 ## License
-Apache 2.0 — see [LICENSE](./LICENSE)
+GPL-3 — see [LICENSE](./LICENSE)
