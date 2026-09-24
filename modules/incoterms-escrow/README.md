@@ -1,5 +1,7 @@
 # Incoterms Escrow
 
+This project is built on the Midnight Network.
+
 > **Status: v0.1, not production-ready.** This is an early-stage reference implementation — no
 > external security audit, and several hardening items (see [Current scope](#current-scope) and
 > [Security notes](#security-notes)) are still open. Do not move real funds with it yet.
