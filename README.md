@@ -46,4 +46,4 @@ needs more than `npm install` to run end-to-end.
 | **Efe Kaan Açin** | Architect, developer |
 ---
 ## License
-GPL-3 — see [LICENSE](./LICENSE)
+AGPL-3.0 — see [LICENSE](./LICENSE)
