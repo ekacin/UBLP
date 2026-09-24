@@ -1,24 +1,25 @@
 /**
- * UBLP Committee Service — BLS12-381 Eşik İmza Servisi (v0.2 Agent-first ZK)
+ * UBLP Committee Service — BLS12-381 Threshold Signature Service (v0.2 Agent-first ZK)
  *
- * Yeni mimari:
- *   Kurul artık ham belgeyi görmüyor (ticari sır korunuyor).
- *   Nakliyeci (Agent) önce ZK kanıtı üretir, sonra kurula sunar.
- *   Kurul ZK kanıtını doğrular → matematiksel olarak ikna olur → BLS imzasını basar.
+ * New architecture:
+ *   The committee no longer sees the raw document (trade secrets stay protected).
+ *   The shipper (Agent) generates the ZK proof first, then submits it to the committee.
+ *   The committee verifies the ZK proof → becomes mathematically convinced → stamps the BLS signature.
  *
- *   ESKI: Ministry → Committee (hash ver → kör BLS)
- *   YENİ: Agent → Committee (ZK proof ver → verify → ikna olmuş BLS)
+ *   OLD: Ministry → Committee (hand over hash → blind BLS)
+ *   NEW: Agent → Committee (submit ZK proof → verify → convinced BLS)
  *
- * Bu tasarımın avantajı:
- *   Kurul "körü körüne" değil, belgenin kurallara uyduğuna KANONIK olarak ikna olarak imzalar.
- *   ZK sayesinde belge içeriği açıklanmadan kanıt doğrulanabilir.
+ * The advantage of this design:
+ *   The committee doesn't sign "blindly" — it signs CANONICALLY convinced that the document
+ *   complies with the rules.
+ *   Thanks to ZK, the proof can be verified without disclosing the document's contents.
  *
- * Özel anahtar güvenliği:
+ * Private key security:
  *   COMMITTEE_KEY_PASSPHRASE → AES-256-GCM + PBKDF2(SHA-512, 600k iter)
  *
  * API:
- *   POST /api/attest  — ZK proof doğrula → BLS eşik imzası üret
- *   GET  /api/info    — groupKeyHash + üye BLS pubkey'leri (L2 sync)
+ *   POST /api/attest  — verify ZK proof → produce BLS threshold signature
+ *   GET  /api/info    — groupKeyHash + member BLS pubkeys (L2 sync)
  */
 
 import Fastify from 'fastify';
@@ -43,7 +44,7 @@ const PORT = parseInt(process.env.COMMITTEE_PORT ?? '3004', 10);
 const THRESHOLD = 2;
 const PASSPHRASE = process.env.COMMITTEE_KEY_PASSPHRASE ?? '';
 
-// ─── Üye Tanımları ────────────────────────────────────────────────────────────
+// ─── Member Definitions ────────────────────────────────────────────────────────
 
 interface CommitteeMember {
   memberId: string;
@@ -136,8 +137,8 @@ async function loadOrGenerateMembers(): Promise<CommitteeMember[]> {
         /^[0-9a-f]{64}$/i.test((stored[0] as PlaintextMemberRecord).privateKey);
 
       if (isEncrypted) {
-        if (!PASSPHRASE) throw new Error('[Committee] Şifreli format var ama COMMITTEE_KEY_PASSPHRASE ayarlı değil.');
-        console.log('[Committee] Şifreli BLS anahtarları çözümleniyor...');
+        if (!PASSPHRASE) throw new Error('[Committee] Encrypted format found but COMMITTEE_KEY_PASSPHRASE is not set.');
+        console.log('[Committee] Decrypting encrypted BLS keys...');
         const members: CommitteeMember[] = (stored as EncryptedMemberRecord[]).map((r) => ({
           memberId: r.memberId,
           privateKey: decryptPrivateKeyHex(r.encryptedPrivateKey, PASSPHRASE),
@@ -145,39 +146,39 @@ async function loadOrGenerateMembers(): Promise<CommitteeMember[]> {
         }));
         for (const m of members) {
           if (!/^[0-9a-f]{64}$/i.test(m.privateKey))
-            throw new Error(`[Committee] Çözümleme başarısız veya yanlış parola — üye: ${m.memberId}`);
+            throw new Error(`[Committee] Decryption failed or wrong passphrase — member: ${m.memberId}`);
         }
-        console.log('[Committee] ✓ Şifreli BLS anahtarları yüklendi.');
+        console.log('[Committee] ✓ Encrypted BLS keys loaded.');
         return members;
       } else if (isPlainBLS) {
         if (PASSPHRASE) {
-          console.log('[Committee] Plaintext → AES-256-GCM şifreleniyor...');
+          console.log('[Committee] Plaintext → encrypting with AES-256-GCM...');
           const members: CommitteeMember[] = (stored as PlaintextMemberRecord[]).map((r) => ({
             memberId: r.memberId, privateKey: r.privateKey, publicKey: r.publicKey,
           }));
           await saveMembers(members);
           return members;
         }
-        console.log('[Committee] BLS anahtarları yüklendi (dev modu).');
+        console.log('[Committee] BLS keys loaded (dev mode).');
         return (stored as PlaintextMemberRecord[]).map((r) => ({
           memberId: r.memberId, privateKey: r.privateKey, publicKey: r.publicKey,
         }));
       } else {
-        console.warn('[Committee] Eski ECDSA format — BLS yeniden üretiliyor...');
+        console.warn('[Committee] Legacy ECDSA format — regenerating BLS keys...');
       }
     }
   }
 
-  console.log('[Committee] Yeni BLS12-381 anahtar çiftleri üretiliyor...');
+  console.log('[Committee] Generating new BLS12-381 key pairs...');
   const members: CommitteeMember[] = MEMBER_IDS.map((memberId) => {
     const kp: BLSKeyPair = blsGenerateKeyPair();
     return { memberId, privateKey: kp.privateKey, publicKey: kp.publicKey };
   });
   await saveMembers(members);
   if (PASSPHRASE) {
-    console.log('[Committee] ✓ Yeni BLS anahtarları AES-256-GCM ile kaydedildi.');
+    console.log('[Committee] ✓ New BLS keys saved with AES-256-GCM.');
   } else {
-    console.warn('[Committee] ⚠ COMMITTEE_KEY_PASSPHRASE ayarlı değil — plaintext (dev modu).');
+    console.warn('[Committee] ⚠ COMMITTEE_KEY_PASSPHRASE is not set — plaintext (dev mode).');
   }
   return members;
 }
@@ -188,7 +189,7 @@ async function buildServer(members: CommitteeMember[]): Promise<void> {
   const groupKeyHash = blsGroupKeyHash(members.map((m) => m.publicKey));
 
   console.log('[Committee] BLS groupKeyHash:', groupKeyHash.slice(0, 16) + '…');
-  console.log('[Committee] Üyeler:', members.map((m) => m.memberId).join(', '));
+  console.log('[Committee] Members:', members.map((m) => m.memberId).join(', '));
 
   // GET /api/info — L2 sync endpoint
   app.get('/api/info', async () => ({
@@ -199,7 +200,7 @@ async function buildServer(members: CommitteeMember[]): Promise<void> {
     members: members.map((m) => ({ memberId: m.memberId, blsPublicKey: m.publicKey })),
   }));
 
-  // ── POST /api/attest — Agent ZK proof'u sunar, kurul verify eder → BLS imzalar ──
+  // ── POST /api/attest — Agent submits the ZK proof, committee verifies it → BLS signs ──
 
   interface AttestPublicValues {
     documentHash: string;
@@ -209,10 +210,10 @@ async function buildServer(members: CommitteeMember[]): Promise<void> {
   }
 
   interface AttestRequest {
-    proofBytes: string;         // base64 — Groth16/PLONK (SP1) veya ECDSA (mock)
+    proofBytes: string;         // base64 — Groth16/PLONK (SP1) or ECDSA (mock)
     proofSystem: string;        // 'sp1-groth16' | 'sp1-plonk' | 'mock-ecdsa-p256'
     publicValues: AttestPublicValues;
-    ministryPublicKey: string;  // PEM SPKI — mock verify için; SP1'de pubKeyHash kontrolü
+    ministryPublicKey: string;  // PEM SPKI — for mock verify; pubKeyHash check in SP1
   }
 
   app.post<{ Body: AttestRequest }>(
@@ -244,11 +245,12 @@ async function buildServer(members: CommitteeMember[]): Promise<void> {
       const { proofBytes, proofSystem, publicValues, ministryPublicKey } = request.body;
       const { documentHash, documentIdHash, holderPubKeyHash } = publicValues;
 
-      console.log('[Committee] ZK kanıtı doğrulanıyor...', proofSystem);
+      console.log('[Committee] Verifying ZK proof...', proofSystem);
 
-      // ── 1. ZK Proof Doğrulama ─────────────────────────────────────────────────
-      // Kurul ham belgeyi görmez — sadece ZK kanıtını doğrular.
-      // Matematiksel ikna: kanıt geçerliyse belge yasal VE Bakanlık imzalamış.
+      // ── 1. ZK Proof Verification ─────────────────────────────────────────────
+      // The committee never sees the raw document — it only verifies the ZK proof.
+      // Mathematical conviction: if the proof is valid, the document is compliant AND
+      // the Ministry signed it.
       let proofValid: boolean;
 
       if (proofSystem === 'sp1-groth16' || proofSystem === 'sp1-plonk') {
@@ -260,22 +262,22 @@ async function buildServer(members: CommitteeMember[]): Promise<void> {
           holderPubKeyHash,
         });
       } else {
-        // Mock mode: proofBytes = Bakanlık ECDSA imzası over combinedHash
+        // Mock mode: proofBytes = Ministry's ECDSA signature over combinedHash
         const combined = combinedSignatureHash(documentHash, documentIdHash);
         proofValid = verifySignatureOverHash(combined, proofBytes, ministryPublicKey);
       }
 
       if (!proofValid) {
-        console.error('[Committee] ✗ ZK kanıtı geçersiz — BLS imzası reddedildi.');
+        console.error('[Committee] ✗ ZK proof invalid — BLS signature refused.');
         return reply.status(400).send({
-          error: 'ZK kanıtı doğrulanamadı. Kurul imzalamayı reddetti.',
+          error: 'ZK proof could not be verified. The committee refused to sign.',
         });
       }
 
-      console.log('[Committee] ✓ ZK kanıtı doğrulandı. BLS eşik imzası üretiliyor...');
+      console.log('[Committee] ✓ ZK proof verified. Producing BLS threshold signature...');
 
-      // ── 2. BLS Eşik İmzası — matematiksel ikna sonrası ───────────────────────
-      // Kurul artık "körü körüne" değil, ZK kanıtına dayanarak imzalıyor.
+      // ── 2. BLS Threshold Signature — after mathematical conviction ───────────
+      // The committee no longer signs "blindly" — it signs based on the ZK proof.
       const msgHex = combinedSignatureHash(documentHash, documentIdHash);
       const partialSigs: string[] = [];
       const signerIds: string[] = [];
@@ -286,13 +288,13 @@ async function buildServer(members: CommitteeMember[]): Promise<void> {
           partialSigs.push(sig);
           signerIds.push(member.memberId);
         } catch (err) {
-          console.warn(`[Committee] ⚠ Üye imzalayamadı: ${member.memberId}`, err);
+          console.warn(`[Committee] ⚠ Member could not sign: ${member.memberId}`, err);
         }
       }
 
       if (partialSigs.length < THRESHOLD) {
         return reply.status(503).send({
-          error: `Eşik sağlanamadı: ${partialSigs.length}/${THRESHOLD} üye imzaladı.`,
+          error: `Threshold not met: ${partialSigs.length}/${THRESHOLD} members signed.`,
         });
       }
 
@@ -309,7 +311,7 @@ async function buildServer(members: CommitteeMember[]): Promise<void> {
       };
 
       console.log(
-        `[Committee] ✓ BLS aggregate imzası üretildi. ` +
+        `[Committee] ✓ BLS aggregate signature produced. ` +
         `docHash=${documentHash.slice(0, 8)}… signers=${signerIds.length}/${members.length}`
       );
 
@@ -327,10 +329,10 @@ const start = async (): Promise<void> => {
   console.log(`[Committee] ✓ BLS12-381 Threshold Committee — http://localhost:${PORT}`);
   console.log(`[Committee] Threshold: ${THRESHOLD}/${MEMBER_IDS.length}`);
   console.log(`[Committee] Key encryption: ${PASSPHRASE ? 'AES-256-GCM' : '⚠ PLAINTEXT (dev)'}`);
-  console.log(`[Committee] Mod: Agent ZK → Committee verify → BLS sign`);
+  console.log(`[Committee] Mode: Agent ZK → Committee verify → BLS sign`);
 };
 
 start().catch((err) => {
-  console.error('[Committee] Başlatma hatası:', err);
+  console.error('[Committee] Startup error:', err);
   process.exit(1);
 });

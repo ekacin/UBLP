@@ -48,9 +48,9 @@ function logVerificationEvent(
 }
 
 /**
- * K-3: Agent VP'yi kendi P-256 anahtarıyla imzalar.
+ * K-3: The agent signs the VP with its own P-256 key.
  * Payload = SHA256(documentHash || documentIdHash || holderDid)
- * ZK circuit private input → L2'ye ham olarak dönmez.
+ * ZK circuit private input → never returned raw to L2.
  */
 function signHolderProof(
   documentHash: string,
@@ -66,8 +66,8 @@ function signHolderProof(
 }
 
 /**
- * ZK kanıtını Committee'ye sunar — ham belge gösterilmez.
- * Kurul ZK proof'u verify eder → matematiksel ikna → BLS imzalar.
+ * Submits the ZK proof to the Committee — the raw document is never shown.
+ * The committee verifies the ZK proof → mathematical conviction → BLS signs.
  */
 async function requestCommitteeAttestation(
   zkProof: ZKProof,
@@ -76,7 +76,7 @@ async function requestCommitteeAttestation(
   ministryPubKeyHash: string
 ): Promise<CommitteeAttestation> {
   const body = {
-    proofBytes: zkProof.ministrySignature,     // proof bytes (Groth16 veya ECDSA sig)
+    proofBytes: zkProof.ministrySignature,     // proof bytes (Groth16 or ECDSA sig)
     proofSystem: zkProof.proof_system,
     publicValues: {
       documentHash: publicInputs.documentHash,
@@ -133,9 +133,9 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
                 issuanceDate: { type: 'string' },
                 credentialSubject: {
                   type: 'object',
-                  // documentHash / documentIdHash VC'de artık YOK.
-                  // Agent bunları rawDocument + documentId'den yerel hesaplar,
-                  // sadece ZK publicValues'a koyar — tek kaynak.
+                  // documentHash / documentIdHash are no longer in the VC.
+                  // The Agent computes them locally from rawDocument + documentId,
+                  // and puts them only into the ZK publicValues — single source of truth.
                   required: ['documentId', 'rawDocument'],
                   properties: {
                     id: { type: 'string' },
@@ -151,7 +151,7 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
                     ministryPublicKey: { type: 'string', minLength: 1 },
                   },
                 },
-                // committeeAttestation VC'de artık YOK — kurul agent'ın ZK kanıtını verify eder
+                // committeeAttestation is no longer in the VC — the committee verifies the agent's ZK proof
               },
             },
           },
@@ -164,31 +164,31 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
       const { credentialSubject: cs, proof: vcProof } = vc;
       const holderDid = cs.id ?? AGENT_DID;
 
-      console.log('[UBLP Agent] VC alındı. ID:', vc.id);
+      console.log('[UBLP Agent] VC received. ID:', vc.id);
       console.log('[UBLP Agent] Issuer:', vc.issuer, '| Holder:', holderDid);
 
-      // ── 1. Hash'leri yerel hesapla — tek kaynak: rawDocument + documentId ─────
-      // credentialSubject artık documentHash / documentIdHash taşımıyor.
-      // Agent rawDocument'ten türetir; Bakanlık imzası da aynı değerler üzerinde.
+      // ── 1. Compute hashes locally — single source of truth: rawDocument + documentId ─
+      // credentialSubject no longer carries documentHash / documentIdHash.
+      // The Agent derives them from rawDocument; the Ministry's signature is over the same values.
       const rawDocument = cs.rawDocument as Record<string, unknown>;
       const documentHash = sha256HashDocument(rawDocument);  // domain: ublp-doc-v1:
       const documentIdHash = sha256Hash(cs.documentId);
 
-      // ── 2. Bakanlık VC imzasını doğrula ──────────────────────────────────────
+      // ── 2. Verify the Ministry's VC signature ────────────────────────────────
       const isValid = verifySignature(rawDocument, vcProof.proofValue, vcProof.ministryPublicKey, documentIdHash);
 
       if (!isValid) {
-        console.error('[UBLP Agent] ✗ VC imzası GEÇERSİZ.');
+        console.error('[UBLP Agent] ✗ VC signature INVALID.');
         logVerificationEvent(cs.documentId, 'customs-verification-rejected', { reason: 'invalid-ministry-signature' });
-        return reply.status(400).send({ error: 'Bakanlık VC imzası doğrulanamadı.' }) as never;
+        return reply.status(400).send({ error: 'Ministry VC signature could not be verified.' }) as never;
       }
-      console.log('[UBLP Agent] ✓ VC imzası geçerli.');
+      console.log('[UBLP Agent] ✓ VC signature valid.');
 
-      // ── 3. K-3: Holder imzası — ZK circuit private input ─────────────────────
+      // ── 3. K-3: Holder signature — ZK circuit private input ──────────────────
       const holderSignature = signHolderProof(documentHash, documentIdHash, holderDid, agentKeys.privateKey);
-      console.log('[UBLP Agent] Holder imzası üretildi (ZK private input).');
+      console.log('[UBLP Agent] Holder signature produced (ZK private input).');
 
-      // ── 4. ZK Proof üret ──────────────────────────────────────────────────────
+      // ── 4. Produce ZK Proof ────────────────────────────────────────────────────
       const privateInputs: PrivateInputs = {
         rawDocument,
         salt: '',
@@ -198,14 +198,14 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
         holderDid,
       };
       const publicInputs: PublicInputs = {
-        documentHash,     // yerel hesaplanmış — cs.documentHash değil
+        documentHash,     // computed locally — not cs.documentHash
         ministryPublicKey: vcProof.ministryPublicKey,
-        documentIdHash,   // yerel hesaplanmış — cs.documentIdHash değil
+        documentIdHash,   // computed locally — not cs.documentIdHash
       };
 
-      console.log('[UBLP Agent] ZK Proof üretiliyor...');
+      console.log('[UBLP Agent] Producing ZK Proof...');
       const zkProof = await generateZKProof(privateInputs, publicInputs);
-      console.log('[UBLP Agent] ✓ ZK Proof üretildi. system:', zkProof.proof_system);
+      console.log('[UBLP Agent] ✓ ZK Proof produced. system:', zkProof.proof_system);
       console.log('[UBLP Agent] holderPubKeyHash:', zkProof.holderPubKeyHash.slice(0, 16) + '…');
 
       // ── 5. pubKeyHash: SHA256(ministry uncompressed P-256 raw bytes) ──────────
@@ -214,10 +214,10 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
       const pubKeyRaw = pubKeyDer.subarray(pubKeyDer.length - 65);
       const pubKeyHash = crypto.createHash('sha256').update(pubKeyRaw).digest('hex');
 
-      // ── 6. Kurula ZK kanıtını sun — ham belge gösterilmez (ticari sır) ────────
-      // Kurul ZK proof'u verify eder → matematiksel olarak ikna → BLS imzalar.
-      // "Körü körüne" imzalama yok artık.
-      console.log('[UBLP Agent] ZK kanıtı kurula sunuluyor →', COMMITTEE_URL);
+      // ── 6. Submit the ZK proof to the committee — the raw document is never shown (trade secret) ──
+      // The committee verifies the ZK proof → mathematically convinced → BLS signs.
+      // No more "blind" signing.
+      console.log('[UBLP Agent] Submitting ZK proof to the committee →', COMMITTEE_URL);
       let committeeAttestation: CommitteeAttestation;
       try {
         committeeAttestation = await requestCommitteeAttestation(
@@ -228,31 +228,31 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.error('[UBLP Agent] ✗ Kurul attestation başarısız:', msg);
+        console.error('[UBLP Agent] ✗ Committee attestation failed:', msg);
         logVerificationEvent(cs.documentId, 'customs-verification-rejected', { reason: 'committee-attestation-failed', detail: msg });
-        return reply.status(502).send({ error: 'Kurul ZK kanıtını doğrulayamadı.', detail: msg }) as never;
+        return reply.status(502).send({ error: 'Committee could not verify the ZK proof.', detail: msg }) as never;
       }
-      console.log('[UBLP Agent] ✓ Kurul BLS attestation alındı. signers:', committeeAttestation.signerIds.length);
+      console.log('[UBLP Agent] ✓ Committee BLS attestation received. signers:', committeeAttestation.signerIds.length);
 
-      // ── 7. VP için minimal VC kopyası ────────────────────────────────────────
+      // ── 7. Minimal VC copy for the VP ────────────────────────────────────────
       //
-      // credentialSubject: sadece { id, documentId } — hash'ler YOK.
-      // documentHash / documentIdHash artık YALNIZCA proof.publicValues'dan okunur.
-      // rawDocument çıkarıldı (AÇIK-2) — L2 belge içeriğini görmez.
+      // credentialSubject: only { id, documentId } — NO hashes.
+      // documentHash / documentIdHash are now read ONLY from proof.publicValues.
+      // rawDocument removed (OPEN-2) — L2 never sees the document contents.
       //
-      // SP1 modunda proofValue (ham ECDSA imzası) VP'de taşınmamalı.
-      // İmza Groth16 circuit private input'u olarak tüketildi.
-      // Mock modunda ise proofValue ZK yokken L2 verify için gerekli değil
-      // (L2 zaten vp.proof.proofBytes'ı kullanıyor, vc.proof.proofValue'ya bakmıyor).
+      // In SP1 mode, proofValue (the raw ECDSA signature) must not be carried in the VP.
+      // The signature was consumed as a Groth16 circuit private input.
+      // In mock mode, proofValue isn't needed for L2 verify since there's no ZK
+      // (L2 already uses vp.proof.proofBytes, it doesn't look at vc.proof.proofValue).
       const isZKMode = zkProof.proof_system.startsWith('sp1');
       const vcForVP: UBLPVerifiableCredential = {
         ...vc,
         credentialSubject: {
           id: holderDid,
           documentId: cs.documentId,
-          // documentHash ÇIKARILDI — fingerprint sızıntısı, publicValues'da zaten var
-          // documentIdHash ÇIKARILDI — aynı sebep
-          // rawDocument ÇIKARILDI — AÇIK-2
+          // documentHash REMOVED — fingerprint leak, already in publicValues
+          // documentIdHash REMOVED — same reason
+          // rawDocument REMOVED — OPEN-2
         },
         proof: {
           ...vcProof,
@@ -261,9 +261,9 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
       };
 
       // ── 9. Verifiable Presentation ───────────────────────────────────────────
-      // committeeAttestation VP proof içinde — VC'de artık YOK.
-      // K-3: holderSignature / holderPublicKey VP'ye GİRMEZ.
-      // publicValues = tek kaynak: L2 ve Committee buradan okur.
+      // committeeAttestation lives inside the VP proof — no longer in the VC.
+      // K-3: holderSignature / holderPublicKey do NOT go into the VP.
+      // publicValues = single source of truth: L2 and Committee read from here.
       const presentation: UBLPVerifiablePresentation = {
         '@context': [
           'https://www.w3.org/2018/credentials/v1',
@@ -278,19 +278,19 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
           proofPurpose: 'authentication',
           proofSystem: zkProof.proof_system,
           publicValues: {
-            documentHash,      // yerel hesaplanmış — tek kaynak
+            documentHash,      // computed locally — single source of truth
             pubKeyHash,
-            documentIdHash,    // yerel hesaplanmış — tek kaynak
+            documentIdHash,    // computed locally — single source of truth
             holderPubKeyHash: zkProof.holderPubKeyHash,
           },
           proofBytes: zkProof.ministrySignature,
           ministryPublicKey: vcProof.ministryPublicKey,
-          committeeAttestation,                          // VP proof içinde taşınıyor
+          committeeAttestation,                          // carried inside the VP proof
         },
       };
 
-      // ── 10. L2'ye gönder ─────────────────────────────────────────────────────
-      console.log('[UBLP Agent] VP L2\'ye gönderiliyor →', L2_VERIFIER_URL);
+      // ── 10. Send to L2 ───────────────────────────────────────────────────────
+      console.log('[UBLP Agent] Sending VP to L2 →', L2_VERIFIER_URL);
 
       let l2Response: Response;
       let l2Result: L2SettleResponse;
@@ -304,18 +304,18 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
         l2Result = await l2Response.json() as L2SettleResponse;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.error('[UBLP Agent] ✗ L2 Verifier\'a ulaşılamadı:', msg);
+        console.error('[UBLP Agent] ✗ Could not reach L2 Verifier:', msg);
         logVerificationEvent(cs.documentId, 'customs-verification-rejected', { reason: 'l2-unreachable', detail: msg });
-        return reply.status(503).send({ error: 'L2 Verifier servisine ulaşılamadı.', detail: msg }) as never;
+        return reply.status(503).send({ error: 'Could not reach the L2 Verifier service.', detail: msg }) as never;
       }
 
       if (!l2Response.ok) {
-        console.error('[UBLP Agent] ✗ L2 reddetti:', l2Result);
+        console.error('[UBLP Agent] ✗ L2 rejected:', l2Result);
         logVerificationEvent(cs.documentId, 'customs-verification-rejected', { reason: 'l2-rejected', l2Result });
-        return reply.status(502).send({ error: 'L2 Verifier onaylamadı.', detail: l2Result }) as never;
+        return reply.status(502).send({ error: 'L2 Verifier did not approve.', detail: l2Result }) as never;
       }
 
-      console.log('[UBLP Agent] ✓ L2 onayladı. Durum:', l2Result.status);
+      console.log('[UBLP Agent] ✓ L2 approved. Status:', l2Result.status);
       logVerificationEvent(cs.documentId, 'customs-verified', {
         proofSystem: zkProof.proof_system,
         l2Status: l2Result.status,
@@ -335,10 +335,10 @@ const start = async (): Promise<void> => {
   await startAgentServer(app, { port: 3002, host: '0.0.0.0' });
   console.log('[UBLP Agent] ✓ UBLP Agent — http://localhost:3002');
   console.log('[UBLP Agent] DID:', AGENT_DID);
-  console.log('[UBLP Agent] Mod: ZK proof → Committee verify → BLS → L2');
+  console.log('[UBLP Agent] Mode: ZK proof → Committee verify → BLS → L2');
 };
 
 start().catch((err) => {
-  console.error('[UBLP Agent] Başlatma hatası:', err);
+  console.error('[UBLP Agent] Startup error:', err);
   process.exit(1);
 });

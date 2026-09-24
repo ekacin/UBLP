@@ -1,6 +1,6 @@
 // UBLP ZK Verifier Circuit (SP1 zkVM)
 //
-// Private inputs (L2'ye açıklanmaz — circuit içinde tüketilir):
+// Private inputs (never disclosed to L2 — consumed inside the circuit):
 //   1. ministry_signature:     Vec<u8> — IEEE P1363, 64 byte (r||s)
 //   2. ministry_pub_key_raw:   Vec<u8> — uncompressed P-256 point, 65 byte
 //   3. document_hash:          Vec<u8> — SHA256("ublp-doc-v1:" + canonicalJson), 32 byte
@@ -9,29 +9,30 @@
 //   6. holder_pub_key_raw:     Vec<u8> — uncompressed P-256 point, 65 byte — K-3
 //   7. holder_did:             Vec<u8> — UTF-8 bytes — K-3 payload
 //
-// NOT — Önceki tasarım (ham JSON) neden değişti:
-//   Eski tasarım document_canonical_json'ı circuit'e private input olarak veriyordu.
-//   SP1 RISC-V VM içinde string parse + key sıralama + dinamik bellek alloc
-//   proof cycle'larını feci şişirir. Bakanlık trusted issuer → hash'i dışarıda
-//   doğru hesaplar. Circuit yalnızca 32 byte sabit hash alır; cycle tasarrufu %80+.
+// NOTE — why the previous design (raw JSON) changed:
+//   The old design fed document_canonical_json into the circuit as a private input.
+//   Inside the SP1 RISC-V VM, string parsing + key sorting + dynamic memory alloc
+//   massively inflates proof cycles. The Ministry is a trusted issuer → it computes
+//   the hash correctly outside. The circuit only takes a fixed 32-byte hash; cycle
+//   savings 80%+.
 //
-// NOT — Gelecek v0.2 BLS migration tasarımı (groupKeyHash public input):
-//   BLS komite doğrulaması circuit'e taşındığında groupKeyHash compile-time
-//   sabiti OLMAMALI — public input olmalı. L2 geçerli kurul hash'ini devreye
-//   paslar; circuit içeride SHA256(sort(signerPubKeys)) == groupKeyHash doğrular.
-//   Böylece komite üyesi değiştiğinde ZK devresine dokunmak gerekmez, yalnızca
-//   L2 state'i güncellenir.
+// NOTE — future v0.2 BLS migration design (groupKeyHash public input):
+//   When BLS committee verification moves into the circuit, groupKeyHash must NOT
+//   be a compile-time constant — it must be a public input. L2 passes the current
+//   committee hash into the circuit; internally it verifies
+//   SHA256(sort(signerPubKeys)) == groupKeyHash. That way, when a committee member
+//   changes, the ZK circuit doesn't need touching — only the L2 state is updated.
 //
-// Public outputs — commit (L2 doğrular, Succinct API bağlar):
+// Public outputs — commit (verified by L2, bound via the Succinct API):
 //   [0] document_hash:         [u8; 32] — SHA256("ublp-doc-v1:" + canonicalJson) — trusted issuer
 //   [1] ministry_pub_key_hash: [u8; 32] — SHA256(ministry_pub_key_raw)
-//   [2] document_id_hash:      [u8; 32] — replay koruması; proof'a bağlı
+//   [2] document_id_hash:      [u8; 32] — replay protection; bound to the proof
 //   [3] holder_pub_key_hash:   [u8; 32] — K-3: SHA256(holder_pub_key_raw)
 //
-// Kriptografik bağlar:
-//   - Ministry sig: SHA256(doc_hash || id_hash) üzerinde P-256 ECDSA
-//   - Holder sig:   SHA256(doc_hash || id_hash || holder_did) üzerinde P-256 ECDSA
-//                   Holder DID değiştirilirse imza kırılır → MitM koruması
+// Cryptographic bindings:
+//   - Ministry sig: P-256 ECDSA over SHA256(doc_hash || id_hash)
+//   - Holder sig:   P-256 ECDSA over SHA256(doc_hash || id_hash || holder_did)
+//                   If the holder DID is tampered with, the signature breaks → MitM protection
 
 #![no_main]
 sp1_zkvm::entrypoint!(main);
@@ -43,12 +44,12 @@ pub fn main() {
     // ── Private inputs ──────────────────────────────────────────────────────────
     let ministry_signature: Vec<u8> = sp1_zkvm::io::read_vec();
     let ministry_pub_key_raw: Vec<u8> = sp1_zkvm::io::read_vec();
-    // document_hash: SHA256("ublp-doc-v1:" + canonicalJson), bakanlık/agent tarafından hesaplanmış.
-    // Domain prefix cross-protocol hash çakışmasını engeller.
-    // Ham JSON circuit'e sokulmuyor → masraf yok, güvenlik aynı.
+    // document_hash: SHA256("ublp-doc-v1:" + canonicalJson), computed by the ministry/agent.
+    // The domain prefix prevents cross-protocol hash collisions.
+    // Raw JSON is never fed into the circuit → no extra cost, same security.
     let document_hash_input: Vec<u8> = sp1_zkvm::io::read_vec();
     let document_id_hash: Vec<u8> = sp1_zkvm::io::read_vec();
-    // K-3: holder auth private inputs — L2'ye hiç gönderilmez
+    // K-3: holder auth private inputs — never sent to L2
     let holder_signature: Vec<u8> = sp1_zkvm::io::read_vec();
     let holder_pub_key_raw: Vec<u8> = sp1_zkvm::io::read_vec();
     let holder_did: Vec<u8> = sp1_zkvm::io::read_vec();
@@ -64,7 +65,7 @@ pub fn main() {
         .try_into()
         .expect("documentIdHash must be 32 bytes");
 
-    // ── AÇIK-1 fix: ministry sig = SHA256(doc_hash || id_hash) ─────────────────
+    // ── OPEN-1 fix: ministry sig = SHA256(doc_hash || id_hash) ─────────────────
     let mut ministry_combined = Vec::with_capacity(64);
     ministry_combined.extend_from_slice(&document_hash);
     ministry_combined.extend_from_slice(&id_hash);
@@ -109,7 +110,7 @@ pub fn main() {
 
     sp1_zkvm::io::commit(&id_hash);
 
-    // K-3: holder ham key değil sadece hash commit edilir — gizlilik korunur
+    // K-3: only the hash is committed, not the raw holder key — privacy preserved
     let holder_pub_key_hash: [u8; 32] = Sha256::digest(&holder_pub_key_raw).into();
     sp1_zkvm::io::commit(&holder_pub_key_hash);
 }

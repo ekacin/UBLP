@@ -70,32 +70,32 @@ async function persistKeys(keys: KeyPair): Promise<void> {
       encryptedPrivateKey: await encryptPrivateKey(keys.privateKey, PASSPHRASE),
     };
     await fs.promises.writeFile(KEYS_PATH, JSON.stringify(fileData, null, 2), 'utf-8');
-    console.log('[Ministry] ✓ Private key AES-256-GCM ile şifrelenerek kaydedildi.');
+    console.log('[Ministry] ✓ Private key encrypted and saved with AES-256-GCM.');
   } else {
     await fs.promises.writeFile(KEYS_PATH, JSON.stringify(keys, null, 2), 'utf-8');
-    console.log('[Ministry] Anahtar çifti (şifresiz/dev) kaydedildi.');
+    console.log('[Ministry] Key pair saved (unencrypted/dev).');
   }
 }
 
 async function loadOrGenerateKeys(): Promise<KeyPair> {
   if (!PASSPHRASE) {
-    console.warn('[Ministry] ⚠  MINISTRY_KEY_PASSPHRASE ayarlı değil — private key şifresiz (sadece geliştirme).');
+    console.warn('[Ministry] ⚠  MINISTRY_KEY_PASSPHRASE is not set — private key unencrypted (dev only).');
   }
   if (fs.existsSync(KEYS_PATH)) {
     const raw = JSON.parse(await fs.promises.readFile(KEYS_PATH, 'utf-8')) as EncryptedKeyFile | LegacyKeyFile;
     if ('version' in raw && raw.version === '2') {
-      if (!PASSPHRASE) throw new Error('Şifreli anahtar dosyası var ama MINISTRY_KEY_PASSPHRASE ayarlı değil.');
+      if (!PASSPHRASE) throw new Error('Encrypted key file found but MINISTRY_KEY_PASSPHRASE is not set.');
       const privateKey = await decryptPrivateKey(raw.encryptedPrivateKey, PASSPHRASE);
-      console.log('[Ministry] ✓ Şifreli anahtar çözüldü.');
+      console.log('[Ministry] ✓ Encrypted key decrypted.');
       return { privateKey, publicKey: raw.publicKey };
     }
     const legacy = raw as LegacyKeyFile;
-    console.warn('[Ministry] ⚠  Eski format — yeni formata geçiriliyor...');
+    console.warn('[Ministry] ⚠  Legacy format — migrating to new format...');
     const keys: KeyPair = { privateKey: legacy.privateKey, publicKey: legacy.publicKey };
     await persistKeys(keys);
     return keys;
   }
-  console.log('[Ministry] Yeni EC P-256 anahtar çifti üretiliyor...');
+  console.log('[Ministry] Generating new EC P-256 key pair...');
   const keys = generateKeyPair();
   await persistKeys(keys);
   return keys;
@@ -128,19 +128,19 @@ async function buildServer(keys: KeyPair): Promise<typeof app> {
       const documentId = document['documentId'] as string;
       const holderDid = (document['holderDid'] as string | undefined) ?? 'did:ublp:agent:unknown';
 
-      console.log('[Ministry] Gümrük belgesi alındı. ID:', documentId);
+      console.log('[Ministry] Customs document received. ID:', documentId);
 
       const documentHash = sha256HashDocument(document);  // domain: ublp-doc-v1:
       const documentIdHash = sha256Hash(documentId);
 
-      // AÇIK-1 fix: SHA256(documentHash || documentIdHash) birleşik hash'i imzalanır
+      // OPEN-1 fix: signs the combined hash SHA256(documentHash || documentIdHash)
       const signature = signDocument(document, keys.privateKey, documentIdHash);
 
       const issuanceDate = new Date().toISOString();
 
-      // Kurul onayı artık bakanlık tarafından alınmıyor.
-      // Nakliyeci (Agent) ZK kanıtını ürettikten sonra kurula sunar.
-      // Kurul, ham belgeyi görmeden ZK proof'u verify edip BLS imzalar.
+      // The committee's approval is no longer obtained by the ministry.
+      // The shipper (Agent) submits it to the committee after producing the ZK proof.
+      // The committee verifies the ZK proof and signs with BLS without seeing the raw document.
 
       const vc: UBLPVerifiableCredential = {
         '@context': [
@@ -154,9 +154,9 @@ async function buildServer(keys: KeyPair): Promise<typeof app> {
         credentialSubject: {
           id: holderDid,
           documentId,
-          // documentHash / documentIdHash ÇIKARILDI — fingerprint sızıntısı.
-          // Bakanlık hash'leri imzalama için hesaplar ama VC'ye gömmez.
-          // Agent rawDocument'ten yeniden hesaplar, ZK publicValues'a koyar.
+          // documentHash / documentIdHash REMOVED — fingerprint leak.
+          // The ministry computes the hashes for signing but doesn't embed them in the VC.
+          // The Agent recomputes them from rawDocument and puts them into the ZK publicValues.
           rawDocument: document,
         },
         proof: {
@@ -167,10 +167,10 @@ async function buildServer(keys: KeyPair): Promise<typeof app> {
           proofValue: signature,
           ministryPublicKey: keys.publicKey,
         },
-        // committeeAttestation YOK — kurul agent'ın ZK kanıtını verify ettikten sonra imzalar
+        // NO committeeAttestation — the committee signs after verifying the agent's ZK proof
       };
 
-      console.log('[Ministry] ✓ Verifiable Credential üretildi. ID:', vc.id);
+      console.log('[Ministry] ✓ Verifiable Credential issued. ID:', vc.id);
       return reply.status(200).send(vc);
     }
   );
@@ -184,11 +184,11 @@ const start = async (): Promise<void> => {
   const keys = await loadOrGenerateKeys();
   await buildServer(keys);
   await app.listen({ port: 3001, host: '0.0.0.0' });
-  console.log('[Ministry] ✓ Ticaret Bakanlığı API — http://localhost:3001');
+  console.log('[Ministry] ✓ Ministry of Trade API — http://localhost:3001');
   console.log('[Ministry] DID:', MINISTRY_DID);
 };
 
 start().catch((err) => {
-  console.error('[Ministry] Başlatma hatası:', err);
+  console.error('[Ministry] Startup error:', err);
   process.exit(1);
 });

@@ -1,10 +1,10 @@
 /**
- * Gümrük Müşaviri — W3C VC/VP akışını başlatan taraf
+ * Customs Broker — the party that kicks off the W3C VC/VP flow
  *
- * Akış:
- *   1. Gümrük belgesi hazırla (holderDid dahil)
- *   2. Bakanlık → Verifiable Credential (VC) al
- *   3. UBLP Agent → VC gönder, Verifiable Presentation (VP) + L2 sonucu al
+ * Flow:
+ *   1. Prepare the customs document (including holderDid)
+ *   2. Ministry → obtain Verifiable Credential (VC)
+ *   3. UBLP Agent → send VC, get Verifiable Presentation (VP) + L2 result
  */
 
 import crypto from 'crypto';
@@ -19,7 +19,7 @@ const UBLP_AGENT_URL = process.env.UBLP_AGENT_URL ?? 'http://localhost:3002';
 const AGENT_DID = process.env.AGENT_DID ?? 'did:ublp:agent:default';
 
 async function run(): Promise<void> {
-  // ─── 1. Gümrük Belgesi ─────────────────────────────────────────────────────
+  // ─── 1. Customs Document ────────────────────────────────────────────────────
   const customsDocument = {
     documentId: `DOC-${crypto.randomUUID()}`,
     holderDid: AGENT_DID,
@@ -39,11 +39,11 @@ async function run(): Promise<void> {
   };
 
   console.log('\n[Customs Broker] ═══════════════════════════════════════════');
-  console.log('[Customs Broker] Gümrük belgesi hazırlandı. ID:', customsDocument.documentId);
+  console.log('[Customs Broker] Customs document prepared. ID:', customsDocument.documentId);
   console.log('[Customs Broker] Holder DID:', customsDocument.holderDid);
-  console.log('[Customs Broker] Bakanlık onayına gönderiliyor →', MINISTRY_URL);
+  console.log('[Customs Broker] Sending for Ministry approval →', MINISTRY_URL);
 
-  // ─── 2. Bakanlık → Verifiable Credential ───────────────────────────────────
+  // ─── 2. Ministry → Verifiable Credential ────────────────────────────────────
   const ministryRes = await fetch(`${MINISTRY_URL}/api/approve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -55,11 +55,11 @@ async function run(): Promise<void> {
   }
 
   const vc = await ministryRes.json() as UBLPVerifiableCredential;
-  console.log('[Customs Broker] ✓ Verifiable Credential alındı. VC ID:', vc.id);
+  console.log('[Customs Broker] ✓ Verifiable Credential received. VC ID:', vc.id);
   console.log('[Customs Broker] Issuer:', vc.issuer);
 
   // ─── 3. UBLP Agent → Verifiable Presentation ───────────────────────────────
-  console.log('[Customs Broker] UBLP Agent\'a iletiliyor →', UBLP_AGENT_URL);
+  console.log('[Customs Broker] Forwarding to UBLP Agent →', UBLP_AGENT_URL);
 
   const agentRes = await fetch(`${UBLP_AGENT_URL}/api/process`, {
     method: 'POST',
@@ -76,17 +76,17 @@ async function run(): Promise<void> {
     l2Result: L2SettleResponse;
   };
 
-  // ─── 4. Sonuç ──────────────────────────────────────────────────────────────
+  // ─── 4. Result ─────────────────────────────────────────────────────────────
   console.log('\n[Customs Broker] ═══════════════════════════════════════════');
-  console.log('[Customs Broker] ✓ W3C VC/VP akışı tamamlandı!');
-  console.log('[Customs Broker] L2 Durumu:', result.l2Result?.status);
+  console.log('[Customs Broker] ✓ W3C VC/VP flow completed!');
+  console.log('[Customs Broker] L2 Status:', result.l2Result?.status);
   console.log('[Customs Broker] Holder:', result.presentation?.holder);
   console.log('[Customs Broker] Proof System:', result.presentation?.proof?.proofSystem);
   console.log('[Customs Broker] Settled At:', result.l2Result?.record?.settledAt);
-  console.log('[Customs Broker] Tam Sonuç:\n', JSON.stringify(result, null, 2));
+  console.log('[Customs Broker] Full Result:\n', JSON.stringify(result, null, 2));
 }
 
 run().catch((err) => {
-  console.error('\n[Customs Broker] ✗ Hata:', (err as Error).message);
+  console.error('\n[Customs Broker] ✗ Error:', (err as Error).message);
   process.exit(1);
 });

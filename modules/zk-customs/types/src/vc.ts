@@ -1,15 +1,15 @@
 /**
- * W3C Verifiable Credentials / Verifiable Presentation tipleri
- * Standart: https://www.w3.org/TR/vc-data-model/
+ * W3C Verifiable Credentials / Verifiable Presentation types
+ * Standard: https://www.w3.org/TR/vc-data-model/
  *
- * Akış (v0.2 mimarisi — Agent-first ZK):
- *   Ministry → ECDSA imzalı VC (committeeAttestation YOK)
- *   Agent    → ZK Proof üretir → Committee'ye sunar (ham belge gösterilmez)
- *   Committee→ ZK verify eder → matematiksel ikna → BLS imzalar
- *   L2       → VP'deki ZK proof + committeeAttestation ikisini doğrular
+ * Flow (v0.2 architecture — Agent-first ZK):
+ *   Ministry → ECDSA-signed VC (NO committeeAttestation)
+ *   Agent    → produces ZK Proof → submits to Committee (raw document never shown)
+ *   Committee→ verifies ZK → mathematical conviction → BLS signs
+ *   L2       → verifies both the ZK proof and committeeAttestation in the VP
  *
- * committeeAttestation artık VC'de değil, VP proof içinde.
- * Sebep: Kurul Bakanlığın kör onayına değil Agent'ın ZK kanıtına dayanarak imzalar.
+ * committeeAttestation is no longer in the VC, it's inside the VP proof.
+ * Reason: the committee signs based on the Agent's ZK proof, not the Ministry's blind approval.
  */
 
 // ─── Committee BLS Threshold ──────────────────────────────────────────────────
@@ -24,14 +24,14 @@ export interface CommitteeAttestation {
   attestedAt: string;
 }
 
-// ─── Verifiable Credential (Bakanlık üretir — sade ECDSA imzası) ─────────────
+// ─── Verifiable Credential (issued by the Ministry — plain ECDSA signature) ──
 
 export interface VCCredentialSubject {
   id: string;
   documentId: string;
-  // documentHash ve documentIdHash KALDIRILDI.
-  // Hash'ler artık ZK kanıtının publicValues bloğundan okunur — tek kaynak.
-  // credentialSubject'te tekrarlamak fingerprint sızıntısı yaratıyor.
+  // documentHash and documentIdHash REMOVED.
+  // The hashes are now read from the ZK proof's publicValues block — single source of truth.
+  // Repeating them in credentialSubject creates a fingerprint leak.
   rawDocument?: Record<string, unknown>;
 }
 
@@ -52,20 +52,20 @@ export interface UBLPVerifiableCredential {
   issuanceDate: string;
   credentialSubject: VCCredentialSubject;
   proof: VCProof;
-  // committeeAttestation KALDIRILDI — artık VP proof içinde.
-  // Kurul belgeyi görmez, ZK kanıtını görür; kanıt agent'ta üretilir.
+  // committeeAttestation REMOVED — now inside the VP proof.
+  // The committee doesn't see the document, it sees the ZK proof; the proof is produced by the agent.
 }
 
-// ─── Verifiable Presentation (Agent üretir, L2'ye gönderir) ──────────────────
+// ─── Verifiable Presentation (produced by the Agent, sent to L2) ─────────────
 
 export interface VPProofPublicValues {
   documentHash: string;
-  /** SHA256(ministryPubKeyRaw) — SP1 circuit 2. output */
+  /** SHA256(ministryPubKeyRaw) — SP1 circuit's 2nd output */
   pubKeyHash: string;
   documentIdHash: string;
   /**
-   * K-3: SHA256(holderPubKeyRaw) — SP1 circuit 4. output.
-   * Ham holder public key L2'ye hiç gönderilmez.
+   * K-3: SHA256(holderPubKeyRaw) — SP1 circuit's 4th output.
+   * The raw holder public key is never sent to L2.
    */
   holderPubKeyHash: string;
 }
@@ -79,9 +79,9 @@ export interface VPProof {
   proofBytes: string;
   ministryPublicKey: string;
   /**
-   * committeeAttestation BURAYA TAŞINDI (VC'den VP'ye).
-   * Kurul, agent'ın ZK kanıtını verify ettikten sonra BLS imzasını basıyor.
-   * L2: ZK proof + BLS attestation bağımsız olarak doğrular.
+   * committeeAttestation MOVED HERE (from the VC to the VP).
+   * The committee stamps the BLS signature after verifying the agent's ZK proof.
+   * L2: independently verifies both the ZK proof and the BLS attestation.
    */
   committeeAttestation: CommitteeAttestation;
 }

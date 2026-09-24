@@ -24,9 +24,9 @@ const MINISTRY_URL = process.env.MINISTRY_URL ?? 'http://localhost:3001';
 const COMMITTEE_URL = process.env.COMMITTEE_URL ?? 'http://localhost:3004';
 
 /**
- * K-1 fix: Proof mode L2 env'inden belirlenir, istemciden değil.
- * PROOF_MODE=sp1  → yalnızca sp1-groth16 / sp1-plonk kabul edilir.
- * PROOF_MODE=dev  → mock-ecdsa-p256 de kabul edilir.
+ * K-1 fix: Proof mode is determined from the L2 env, not from the client.
+ * PROOF_MODE=sp1  → only sp1-groth16 / sp1-plonk are accepted.
+ * PROOF_MODE=dev  → mock-ecdsa-p256 is also accepted.
  */
 const PROOF_MODE = (process.env.PROOF_MODE ?? 'dev') as 'sp1' | 'dev';
 
@@ -40,7 +40,7 @@ interface RevokedKeyEntry {
 let authorizedPublicKeys: Set<string> = new Set();
 let revokedKeys: Map<string, string> = new Map(); // PEM → compromise timestamp
 
-// K-2: L2 kendi deposu — attestation'daki pubkey'lere güvenmez
+// K-2: L2's own store — doesn't trust the pubkeys inside the attestation
 let committeeGroupKeyHash: string | null = null;
 let committeeMembers: Array<{ memberId: string; blsPublicKey: string }> = [];
 let committeeThreshold = 2;
@@ -68,10 +68,10 @@ async function syncMinistryPublicKey(): Promise<boolean> {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as { ministryPublicKey: string };
     authorizedPublicKeys.add(data.ministryPublicKey);
-    console.log('[L2 Verifier] ✓ Bakanlık public key yetkili listeye eklendi.');
+    console.log('[L2 Verifier] ✓ Ministry public key added to the authorized list.');
     return true;
   } catch (err) {
-    console.warn('[L2 Verifier] ✗ Bakanlık public key yüklenemedi:', (err as Error).message);
+    console.warn('[L2 Verifier] ✗ Failed to load Ministry public key:', (err as Error).message);
     return false;
   }
 }
@@ -88,10 +88,10 @@ async function syncCommitteeInfo(): Promise<boolean> {
     committeeGroupKeyHash = data.groupKeyHash;
     committeeMembers = data.members;
     committeeThreshold = data.threshold;
-    console.log('[L2 Verifier] ✓ Kurul BLS bilgisi senkronize edildi. groupKeyHash:', committeeGroupKeyHash?.slice(0, 16) + '…');
+    console.log('[L2 Verifier] ✓ Committee BLS info synced. groupKeyHash:', committeeGroupKeyHash?.slice(0, 16) + '…');
     return true;
   } catch (err) {
-    console.warn('[L2 Verifier] ✗ Kurul bilgisi yüklenemedi:', (err as Error).message);
+    console.warn('[L2 Verifier] ✗ Failed to load committee info:', (err as Error).message);
     return false;
   }
 }
@@ -104,20 +104,20 @@ function syncWithRetry(maxAttempts = 12, baseDelayMs = 1000): void {
     const committeeOk = await syncCommitteeInfo();
     if (ministryOk && committeeOk) return;
     if (attempt >= maxAttempts) {
-      console.error(`[L2 Verifier] ✗ Sync ${maxAttempts} denemede başarısız.`);
+      console.error(`[L2 Verifier] ✗ Sync failed after ${maxAttempts} attempts.`);
       return;
     }
     const delay = Math.min(baseDelayMs * Math.pow(2, attempt - 1), 30_000);
-    console.log(`[L2 Verifier] Retry (${attempt}/${maxAttempts}) — ${delay}ms sonra.`);
+    console.log(`[L2 Verifier] Retry (${attempt}/${maxAttempts}) — in ${delay}ms.`);
     setTimeout(() => void tryOnce(), delay);
   };
   void tryOnce();
 }
 
-// ─── Committee BLS Attestation Doğrulama (K-2 fix) ───────────────────────────
+// ─── Committee BLS Attestation Verification (K-2 fix) ────────────────────────
 //
-// L2, committee'nin önceden ZK doğruladığını biliyor ama bağımsız olarak da
-// BLS imzasını verify eder. Güven zinciri: ZK (agent) + BLS (committee) → L2.
+// L2 knows the committee already verified the ZK proof, but it also independently
+// verifies the BLS signature. Trust chain: ZK (agent) + BLS (committee) → L2.
 
 async function verifyCommitteeAttestation(
   attestation: CommitteeAttestation,
@@ -125,16 +125,16 @@ async function verifyCommitteeAttestation(
   documentIdHash: string
 ): Promise<{ valid: boolean; reason?: string }> {
   if (!committeeGroupKeyHash || committeeMembers.length === 0) {
-    return { valid: false, reason: 'L2 kurul bilgisini henüz senkronize etmedi.' };
+    return { valid: false, reason: 'L2 has not synced committee info yet.' };
   }
   if (attestation.groupKeyHash !== committeeGroupKeyHash) {
-    return { valid: false, reason: 'groupKeyHash uyuşmuyor — sahte veya eski attestation.' };
+    return { valid: false, reason: 'groupKeyHash mismatch — forged or stale attestation.' };
   }
 
   const allPubKeys = committeeMembers.map((m) => m.blsPublicKey);
   const recomputed = blsGroupKeyHash(allPubKeys);
   if (recomputed !== committeeGroupKeyHash) {
-    return { valid: false, reason: 'groupKeyHash recompute tutarsız — L2 member listesi bozuk.' };
+    return { valid: false, reason: 'groupKeyHash recompute mismatch — L2 member list is corrupted.' };
   }
 
   const memberMap = new Map(committeeMembers.map((m) => [m.memberId, m.blsPublicKey]));
@@ -148,7 +148,7 @@ async function verifyCommitteeAttestation(
   }
 
   if (unknownSigners.length > 0) {
-    return { valid: false, reason: `Bilinmeyen imzacılar: ${unknownSigners.join(', ')}` };
+    return { valid: false, reason: `Unknown signers: ${unknownSigners.join(', ')}` };
   }
 
   const msgHex = combinedSignatureHash(documentHash, documentIdHash);
@@ -199,7 +199,7 @@ app.post<{ Body: VerifyRequest }>(
                   properties: {
                     credentialSubject: {
                       type: 'object',
-                      // documentHash / documentIdHash ÇIKARILDI — tek kaynak: publicValues
+                      // documentHash / documentIdHash REMOVED — single source of truth: publicValues
                       required: ['documentId'],
                       properties: {
                         id: { type: 'string' },
@@ -228,7 +228,7 @@ app.post<{ Body: VerifyRequest }>(
                   },
                   proofBytes: { type: 'string', minLength: 1 },
                   ministryPublicKey: { type: 'string', minLength: 1 },
-                  // committeeAttestation VP proof içinde — agent ZK verify ettirdikten sonra alıyor
+                  // committeeAttestation lives inside the VP proof — the agent gets it after having the ZK proof verified
                   committeeAttestation: {
                     type: 'object',
                     required: ['type', 'threshold', 'groupKeyHash', 'signerIds', 'aggregatedSignature'],
@@ -254,59 +254,60 @@ app.post<{ Body: VerifyRequest }>(
     const holderPubKeyHash = vpProof.publicValues.holderPubKeyHash;
     const holderDid = presentation.holder;
 
-    // committeeAttestation artık VP proof içinde (VC'de değil)
+    // committeeAttestation now lives inside the VP proof (not the VC)
     const committeeAttestation = vpProof.committeeAttestation;
 
-    console.log('[L2 Verifier] VP alındı. Holder:', holderDid);
+    console.log('[L2 Verifier] VP received. Holder:', holderDid);
     console.log('[L2 Verifier] documentIdHash:', documentIdHash);
 
     // ── 0. Whitelist + revocation ──────────────────────────────────────────────
     if (!authorizedPublicKeys.has(ministryPublicKey)) {
-      console.error('[L2 Verifier] ✗ Yetkisiz Bakanlık public key.');
-      return reply.status(403).send({ error: 'Yetkisiz Bakanlık public key.' });
+      console.error('[L2 Verifier] ✗ Unauthorized Ministry public key.');
+      return reply.status(403).send({ error: 'Unauthorized Ministry public key.' });
     }
     if (revokedKeys.has(ministryPublicKey)) {
-      console.error('[L2 Verifier] ✗ İptal edilmiş Bakanlık public key.');
-      return reply.status(403).send({ error: 'Bakanlık anahtarı iptal edilmiş.' });
+      console.error('[L2 Verifier] ✗ Revoked Ministry public key.');
+      return reply.status(403).send({ error: 'Ministry key has been revoked.' });
     }
 
-    // ── 1. rawDocument yokluğu (AÇIK-2) ─────────────────────────────────────
-    // documentHash / documentIdHash consistency check KALDIRILDI.
-    // ZK publicValues tek kaynak — circuit commit etti, L2 tekrar vc'den okumaz.
-    // Mock modda da aynı: agent publicValues'ı yerel hesaplar, L2 oraya güvenir.
+    // ── 1. Absence of rawDocument (OPEN-2) ───────────────────────────────────
+    // documentHash / documentIdHash consistency check REMOVED.
+    // ZK publicValues is the single source of truth — the circuit committed to it,
+    // L2 doesn't re-read it from the vc.
+    // Same in mock mode: the agent computes publicValues locally, L2 trusts it.
     if (cs.rawDocument !== undefined) {
-      console.error('[L2 Verifier] ✗ VP içinde rawDocument (AÇIK-2).');
-      return reply.status(400).send({ error: 'VP rawDocument içeremez.' });
+      console.error('[L2 Verifier] ✗ rawDocument present in VP (OPEN-2).');
+      return reply.status(400).send({ error: 'VP must not contain rawDocument.' });
     }
 
     // ── 2. K-3: holderPubKeyHash ──────────────────────────────────────────────
     if (!holderPubKeyHash || holderPubKeyHash.length !== 64) {
-      return reply.status(400).send({ error: 'holderPubKeyHash geçersiz (K-3).' });
+      return reply.status(400).send({ error: 'holderPubKeyHash invalid (K-3).' });
     }
 
-    // ── 3. Kurul BLS attestation (K-2) ───────────────────────────────────────
-    // L2 bağımsız olarak verify eder — committee'nin ZK verify ettiğine güvenmez.
-    // İki katman: Committee (ZK → BLS) + L2 (BLS bağımsız verify).
+    // ── 3. Committee BLS attestation (K-2) ────────────────────────────────────
+    // L2 verifies independently — it doesn't just trust that the committee verified
+    // the ZK proof. Two layers: Committee (ZK → BLS) + L2 (independent BLS verify).
     const committeeResult = await verifyCommitteeAttestation(committeeAttestation, documentHash, documentIdHash);
     if (!committeeResult.valid) {
-      console.error('[L2 Verifier] ✗ Kurul attestation başarısız:', committeeResult.reason);
-      return reply.status(400).send({ error: `Kurul attestation geçersiz: ${committeeResult.reason}` });
+      console.error('[L2 Verifier] ✗ Committee attestation failed:', committeeResult.reason);
+      return reply.status(400).send({ error: `Committee attestation invalid: ${committeeResult.reason}` });
     }
-    console.log('[L2 Verifier] ✓ Kurul BLS attestation doğrulandı.');
+    console.log('[L2 Verifier] ✓ Committee BLS attestation verified.');
 
     // ── 4. K-1: ZK Proof / ECDSA ─────────────────────────────────────────────
     const proofSystem = vpProof.proofSystem;
 
     if (PROOF_MODE === 'sp1') {
       if (proofSystem !== 'sp1-groth16' && proofSystem !== 'sp1-plonk') {
-        return reply.status(400).send({ error: 'Production mode: SP1 ZK proof zorunlu.' });
+        return reply.status(400).send({ error: 'Production mode: SP1 ZK proof is required.' });
       }
     }
 
     let proofValid: boolean;
 
     if (proofSystem === 'sp1-groth16' || proofSystem === 'sp1-plonk') {
-      console.log('[L2 Verifier] SP1 proof doğrulanıyor...');
+      console.log('[L2 Verifier] Verifying SP1 proof...');
       proofValid = await sp1VerifyProof({
         proofBytes: vpProof.proofBytes,
         documentHash,
@@ -322,18 +323,18 @@ app.post<{ Body: VerifyRequest }>(
     }
 
     if (!proofValid) {
-      console.error('[L2 Verifier] ✗ Proof başarısız. [', proofSystem, ']');
-      return reply.status(400).send({ error: 'ZK Proof / imza doğrulaması başarısız.' });
+      console.error('[L2 Verifier] ✗ Proof failed. [', proofSystem, ']');
+      return reply.status(400).send({ error: 'ZK Proof / signature verification failed.' });
     }
-    console.log('[L2 Verifier] ✓ Proof doğrulandı. [', proofSystem, ']');
+    console.log('[L2 Verifier] ✓ Proof verified. [', proofSystem, ']');
 
-    // ── 5. Replay + atomik kayıt ──────────────────────────────────────────────
+    // ── 5. Replay + atomic record ─────────────────────────────────────────────
     return await dbMutex.runExclusive(async () => {
       const db = await loadDB();
       const duplicate = db.find((r) => r.documentIdHash === documentIdHash);
       if (duplicate) {
         console.warn('[L2 Verifier] ⚠ Replay:', documentIdHash);
-        return reply.status(409).send({ error: 'Belge zaten onaylanmış.', record: duplicate });
+        return reply.status(409).send({ error: 'Document already approved.', record: duplicate });
       }
 
       const record: L2SettleRecord = {
@@ -348,7 +349,7 @@ app.post<{ Body: VerifyRequest }>(
 
       db.push(record);
       await saveDB(db);
-      console.log('[L2 Verifier] ✓ VP "APPROVED". Toplam:', db.length);
+      console.log('[L2 Verifier] ✓ VP "APPROVED". Total:', db.length);
       const response: L2SettleResponse = { status: 'APPROVED', record };
       return reply.status(200).send(response);
     });
@@ -368,7 +369,7 @@ app.post('/api/sync', async () => {
   };
 });
 
-// ─── Key İptali — Zaman Damgalı ───────────────────────────────────────────────
+// ─── Key Revocation — Timestamped ─────────────────────────────────────────────
 
 app.post<{ Body: { ministryPublicKey: string; compromisedAt?: string } }>(
   '/api/revoke-key',
@@ -388,7 +389,7 @@ app.post<{ Body: { ministryPublicKey: string; compromisedAt?: string } }>(
     const { ministryPublicKey, compromisedAt } = request.body;
 
     if (!authorizedPublicKeys.has(ministryPublicKey)) {
-      return reply.status(404).send({ error: 'Bu public key yetkili listede değil.' });
+      return reply.status(404).send({ error: 'This public key is not on the authorized list.' });
     }
 
     const revokedAt = compromisedAt ?? new Date().toISOString();
@@ -414,7 +415,7 @@ app.post<{ Body: { ministryPublicKey: string; compromisedAt?: string } }>(
       return count;
     });
 
-    console.warn(`[L2 Verifier] ⚠ Key iptal. compromisedAt=${revokedAt} SUSPICIOUS=${suspiciousCount}`);
+    console.warn(`[L2 Verifier] ⚠ Key revoked. compromisedAt=${revokedAt} SUSPICIOUS=${suspiciousCount}`);
     return reply.status(200).send({
       revoked: true,
       compromisedAt: revokedAt,
@@ -429,7 +430,7 @@ app.post<{ Body: { ministryPublicKey: string; compromisedAt?: string } }>(
 const start = async (): Promise<void> => {
   revokedKeys = await loadRevokedKeys();
   if (revokedKeys.size > 0)
-    console.log(`[L2 Verifier] ${revokedKeys.size} iptal anahtar yüklendi.`);
+    console.log(`[L2 Verifier] ${revokedKeys.size} revoked key(s) loaded.`);
   await app.listen({ port: 3003, host: '0.0.0.0' });
   console.log('[L2 Verifier] ✓ L2 Verifier Mock — http://localhost:3003');
   console.log('[L2 Verifier] PROOF_MODE:', PROOF_MODE);
@@ -437,6 +438,6 @@ const start = async (): Promise<void> => {
 };
 
 start().catch((err) => {
-  console.error('[L2 Verifier] Başlatma hatası:', err);
+  console.error('[L2 Verifier] Startup error:', err);
   process.exit(1);
 });
