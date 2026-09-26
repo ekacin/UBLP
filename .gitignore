@@ -13,6 +13,7 @@ dist/
 **/committee/data/
 **/ublp-agent/data/
 **/l2-verifier-mock/data/
+**/customs-broker/data/
 
 # Transaction audit log (SQLite) — real deal/counterparty data, company-internal only
 **/incoterms-escrow/data/

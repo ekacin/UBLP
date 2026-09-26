@@ -3,13 +3,20 @@
   "version": "0.1.0",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts"
+    "start": "node dist/server.js",
+    "dev": "ts-node src/server.ts",
+    "smoke": "ts-node src/index.ts"
   },
   "dependencies": {
-    "@ublp/zk-customs-types": "*"
+    "@ublp/shared": "*",
+    "@ublp/zk-customs-types": "*",
+    "@fastify/cors": "^11.3.0",
+    "@fastify/rate-limit": "^11.2.0",
+    "better-sqlite3": "^13.0.3",
+    "fastify": "^5.8.5"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.14.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.5"

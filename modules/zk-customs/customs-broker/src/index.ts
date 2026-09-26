@@ -1,10 +1,18 @@
 /**
- * Customs Broker — the party that kicks off the W3C VC/VP flow
+ * Customs Broker — one-shot smoke-test script (`npm run smoke`).
+ *
+ * NOT the module's entrypoint anymore — `server.ts` (`npm start`/`npm run dev`) is the real,
+ * persistent backend with human review gates at both Ministry and Broker (see the
+ * backend-foundation plan). This script exercises Ministry's new review-then-sign flow and the
+ * unchanged Agent -> Committee -> L2 leg directly, without going through Broker's own server/
+ * poller — useful to isolate whether Ministry/Agent/Committee/L2 are wired correctly on their
+ * own. It plays both parts of Ministry's human gate itself (submits, then immediately logs in
+ * and approves as the officer) so it can still run start-to-finish as a single script.
  *
  * Flow:
  *   1. Prepare the customs document (including holderDid)
- *   2. Ministry → obtain Verifiable Credential (VC)
- *   3. UBLP Agent → send VC, get Verifiable Presentation (VP) + L2 result
+ *   2. Ministry → submit for review (API key), then approve as the officer (session login)
+ *   3. UBLP Agent → send the resulting VC, get a Verifiable Presentation (VP) + L2 result
  */
 
 import crypto from 'crypto';
@@ -15,6 +23,8 @@ import {
 } from '@ublp/zk-customs-types';
 
 const MINISTRY_URL = process.env.MINISTRY_URL ?? 'http://localhost:3001';
+const MINISTRY_API_KEY = process.env.MINISTRY_BROKER_API_KEY ?? '';
+const MINISTRY_OPERATOR_PASSPHRASE = process.env.MINISTRY_OPERATOR_PASSPHRASE ?? '';
 const UBLP_AGENT_URL = process.env.UBLP_AGENT_URL ?? 'http://localhost:3002';
 const AGENT_DID = process.env.AGENT_DID ?? 'did:ublp:agent:default';
 
@@ -41,20 +51,40 @@ async function run(): Promise<void> {
   console.log('\n[Customs Broker] ═══════════════════════════════════════════');
   console.log('[Customs Broker] Customs document prepared. ID:', customsDocument.documentId);
   console.log('[Customs Broker] Holder DID:', customsDocument.holderDid);
-  console.log('[Customs Broker] Sending for Ministry approval →', MINISTRY_URL);
+  console.log('[Customs Broker] Submitting to Ministry for review →', MINISTRY_URL);
 
-  // ─── 2. Ministry → Verifiable Credential ────────────────────────────────────
-  const ministryRes = await fetch(`${MINISTRY_URL}/api/approve`, {
+  // ─── 2a. Ministry → submit for review ───────────────────────────────────────
+  const submitRes = await fetch(`${MINISTRY_URL}/api/approve`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'x-api-key': MINISTRY_API_KEY },
     body: JSON.stringify(customsDocument),
   });
-
-  if (!ministryRes.ok) {
-    throw new Error(`[Ministry] HTTP ${ministryRes.status}: ${await ministryRes.text()}`);
+  if (!submitRes.ok) {
+    throw new Error(`[Ministry] HTTP ${submitRes.status}: ${await submitRes.text()}`);
   }
+  const { submissionId } = (await submitRes.json()) as { submissionId: number };
+  console.log('[Customs Broker] ✓ Queued for review. submissionId:', submissionId);
 
-  const vc = await ministryRes.json() as UBLPVerifiableCredential;
+  // ─── 2b. Ministry → log in and approve as the officer (smoke test only —
+  //         a real deployment has an actual human doing this in a panel) ────────
+  const loginRes = await fetch(`${MINISTRY_URL}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ passphrase: MINISTRY_OPERATOR_PASSPHRASE }),
+  });
+  if (!loginRes.ok) {
+    throw new Error(`[Ministry] Officer login failed: HTTP ${loginRes.status}: ${await loginRes.text()}`);
+  }
+  const { sessionToken } = (await loginRes.json()) as { sessionToken: string };
+
+  const approveRes = await fetch(`${MINISTRY_URL}/api/pending/${submissionId}/approve`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${sessionToken}` },
+  });
+  if (!approveRes.ok) {
+    throw new Error(`[Ministry] Approve failed: HTTP ${approveRes.status}: ${await approveRes.text()}`);
+  }
+  const { verifiableCredential: vc } = (await approveRes.json()) as { verifiableCredential: UBLPVerifiableCredential };
   console.log('[Customs Broker] ✓ Verifiable Credential received. VC ID:', vc.id);
   console.log('[Customs Broker] Issuer:', vc.issuer);
 
