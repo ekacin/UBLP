@@ -9,6 +9,7 @@ dist/
 
 # Private keys & credentials — NEVER commit
 **/ministry/keys/
+**/ministry/data/
 **/committee/data/
 **/ublp-agent/data/
 **/l2-verifier-mock/data/
@@ -50,6 +51,7 @@ coverage/
 
 # Internal architecture/decision notes — local only, never public
 AGENTS.md
+AGENTS_NEW.md
 
 # Local devnet test wallet secrets (encrypted, but throwaway test money only —
 # never meant to leave this machine either way)

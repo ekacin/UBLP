@@ -1,4 +1,5 @@
-import Fastify from 'fastify';
+import Fastify, { FastifyReply, FastifyRequest } from 'fastify';
+import rateLimit from '@fastify/rate-limit';
 import crypto from 'crypto';
 import { promisify } from 'util';
 import fs from 'fs';
@@ -8,16 +9,64 @@ import {
   signDocument,
   sha256Hash,
   sha256HashDocument,
-  canonicalJson,
   KeyPair,
+  SimpleSessionAuthStore,
+  createReviewItem,
+  decideReviewItem,
+  getReviewItem,
+  listReviewItems,
 } from '@ublp/shared';
 import { UBLPVerifiableCredential } from '@ublp/zk-customs-types';
+import { openMinistryDb, upsertDocumentRecord, getDocumentRecord } from './db';
 
 const pbkdf2 = promisify(crypto.pbkdf2);
 
-const app = Fastify({ logger: false });
 const KEYS_PATH = path.join(__dirname, '..', 'keys', 'keypair.json');
+const DB_PATH = path.join(__dirname, '..', 'data', 'ministry.db');
 const MINISTRY_DID = process.env.MINISTRY_DID ?? 'did:ublp:ministry';
+const PORT = parseInt(process.env.MINISTRY_PORT ?? '3001', 10);
+
+// ─── Auth ───────────────────────────────────────────────────────────────────────
+//
+// Two separate trust boundaries, deliberately not conflated (see the backend-foundation plan):
+//   - OPERATOR_PASSPHRASE: a human officer logging into the (future) review panel — session
+//     bearer tokens via SimpleSessionAuthStore, same shape as incoterms-escrow's wallet-based
+//     AuthStore minus the wallet (zk-customs has no user-facing wallet identity yet).
+//   - BROKER_API_KEY: machine-to-machine traffic from a genuinely separate self-hosted
+//     organization (the customs broker's own backend), not a human session. A v0.1
+//     simplification — no PKI/wallet identity between organizations exists yet, flagged rather
+//     than hidden, same as the rest of this project's own v0.1 shortcuts.
+const OPERATOR_PASSPHRASE = process.env.MINISTRY_OPERATOR_PASSPHRASE ?? '';
+const BROKER_API_KEY = process.env.MINISTRY_BROKER_API_KEY ?? '';
+
+if (!OPERATOR_PASSPHRASE) {
+  console.warn('[Ministry] ⚠ MINISTRY_OPERATOR_PASSPHRASE is not set — officer login is disabled.');
+}
+if (!BROKER_API_KEY) {
+  console.warn('[Ministry] ⚠ MINISTRY_BROKER_API_KEY is not set — broker-facing routes are unprotected (dev only).');
+}
+
+const auth = new SimpleSessionAuthStore(OPERATOR_PASSPHRASE);
+setInterval(() => auth.sweepExpired(), 60_000);
+
+function requireSession(request: FastifyRequest, reply: FastifyReply, done: (err?: Error) => void): void {
+  const header = request.headers.authorization ?? '';
+  const token = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
+  if (!token || !auth.isSessionValid(token)) {
+    reply.status(401).send({ error: 'Not authenticated. Log in via POST /auth/login.' });
+    return;
+  }
+  done();
+}
+
+function requireApiKey(request: FastifyRequest, reply: FastifyReply, done: (err?: Error) => void): void {
+  const provided = request.headers['x-api-key'];
+  if (!BROKER_API_KEY || provided !== BROKER_API_KEY) {
+    reply.status(401).send({ error: 'Missing or invalid API key.' });
+    return;
+  }
+  done();
+}
 
 // ─── Key Encryption ───────────────────────────────────────────────────────────
 
@@ -101,17 +150,72 @@ async function loadOrGenerateKeys(): Promise<KeyPair> {
   return keys;
 }
 
+// ─── VC issuance — unchanged logic, now runs on approval instead of on submit ───
+
+function issueVerifiableCredential(document: Record<string, unknown>, keys: KeyPair): UBLPVerifiableCredential {
+  const documentId = document['documentId'] as string;
+  const holderDid = (document['holderDid'] as string | undefined) ?? 'did:ublp:agent:unknown';
+
+  const documentIdHash = sha256Hash(documentId);
+  // OPEN-1 fix: signs the combined hash SHA256(documentHash || documentIdHash)
+  const signature = signDocument(document, keys.privateKey, documentIdHash);
+  const issuanceDate = new Date().toISOString();
+
+  return {
+    '@context': [
+      'https://www.w3.org/2018/credentials/v1',
+      'https://ublp.io/vc/v1',
+    ],
+    id: `urn:ublp:vc:${documentId}`,
+    type: ['VerifiableCredential', 'UBLPCustomsCredential'],
+    issuer: MINISTRY_DID,
+    issuanceDate,
+    credentialSubject: {
+      id: holderDid,
+      documentId,
+      // documentHash / documentIdHash intentionally not embedded — see the original comment
+      // this replaces: the Agent recomputes them from rawDocument for the ZK publicValues.
+      rawDocument: document,
+    },
+    proof: {
+      type: 'EcdsaSecp256r1Signature2019',
+      created: issuanceDate,
+      verificationMethod: `${MINISTRY_DID}#key-1`,
+      proofPurpose: 'assertionMethod',
+      proofValue: signature,
+      ministryPublicKey: keys.publicKey,
+    },
+  };
+}
+
 // ─── Server ───────────────────────────────────────────────────────────────────
 
-async function buildServer(keys: KeyPair): Promise<typeof app> {
+export async function buildServer(keys: KeyPair, db: ReturnType<typeof openMinistryDb>) {
+  const app = Fastify({ logger: false });
+  await app.register(rateLimit, { global: false });
+
   app.get('/api/public-key', async () => ({
     ministryPublicKey: keys.publicKey,
     did: MINISTRY_DID,
   }));
 
+  app.post<{ Body: { passphrase: string } }>(
+    '/auth/login',
+    { schema: { body: { type: 'object', required: ['passphrase'], properties: { passphrase: { type: 'string' } } } } },
+    async (request, reply) => {
+      const result = auth.login(request.body.passphrase);
+      if (!result) return reply.status(401).send({ error: 'Invalid passphrase.' });
+      return result;
+    }
+  );
+
+  // ── Broker-facing (API-key protected): submit a document for review, poll its outcome ──
+
   app.post<{ Body: Record<string, unknown> }>(
     '/api/approve',
     {
+      preHandler: requireApiKey,
+      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
       schema: {
         body: {
           type: 'object',
@@ -126,52 +230,62 @@ async function buildServer(keys: KeyPair): Promise<typeof app> {
     async (request, reply) => {
       const document = request.body;
       const documentId = document['documentId'] as string;
-      const holderDid = (document['holderDid'] as string | undefined) ?? 'did:ublp:agent:unknown';
+      console.log('[Ministry] Customs document received for review. ID:', documentId);
 
-      console.log('[Ministry] Customs document received. ID:', documentId);
+      const item = createReviewItem(db, {
+        kind: 'document-approval',
+        refId: documentId,
+        payload: document,
+        requestedBy: 'broker',
+      });
+      upsertDocumentRecord(db, item.id, 'awaiting_approval', null);
 
-      const documentHash = sha256HashDocument(document);  // domain: ublp-doc-v1:
-      const documentIdHash = sha256Hash(documentId);
+      return reply.status(202).send({ submissionId: item.id, status: 'awaiting_approval' });
+    }
+  );
 
-      // OPEN-1 fix: signs the combined hash SHA256(documentHash || documentIdHash)
-      const signature = signDocument(document, keys.privateKey, documentIdHash);
+  app.get<{ Params: { submissionId: string } }>(
+    '/api/documents/:submissionId',
+    { preHandler: requireApiKey },
+    async (request, reply) => {
+      const submissionId = Number(request.params.submissionId);
+      const record = getDocumentRecord(db, submissionId);
+      if (!record) return reply.status(404).send({ error: 'Unknown submissionId.' });
+      return { status: record.status, verifiableCredential: record.verifiableCredential ?? undefined };
+    }
+  );
 
-      const issuanceDate = new Date().toISOString();
+  // ── Officer-facing (session protected): review queue ──
 
-      // The committee's approval is no longer obtained by the ministry.
-      // The shipper (Agent) submits it to the committee after producing the ZK proof.
-      // The committee verifies the ZK proof and signs with BLS without seeing the raw document.
+  app.get('/api/pending', { preHandler: requireSession }, async () =>
+    listReviewItems(db, { kind: 'document-approval', status: 'awaiting_approval' })
+  );
 
-      const vc: UBLPVerifiableCredential = {
-        '@context': [
-          'https://www.w3.org/2018/credentials/v1',
-          'https://ublp.io/vc/v1',
-        ],
-        id: `urn:ublp:vc:${documentId}`,
-        type: ['VerifiableCredential', 'UBLPCustomsCredential'],
-        issuer: MINISTRY_DID,
-        issuanceDate,
-        credentialSubject: {
-          id: holderDid,
-          documentId,
-          // documentHash / documentIdHash REMOVED — fingerprint leak.
-          // The ministry computes the hashes for signing but doesn't embed them in the VC.
-          // The Agent recomputes them from rawDocument and puts them into the ZK publicValues.
-          rawDocument: document,
-        },
-        proof: {
-          type: 'EcdsaSecp256r1Signature2019',
-          created: issuanceDate,
-          verificationMethod: `${MINISTRY_DID}#key-1`,
-          proofPurpose: 'assertionMethod',
-          proofValue: signature,
-          ministryPublicKey: keys.publicKey,
-        },
-        // NO committeeAttestation — the committee signs after verifying the agent's ZK proof
-      };
+  app.post<{ Params: { id: string } }>(
+    '/api/pending/:id/approve',
+    { preHandler: requireSession },
+    async (request, reply) => {
+      const id = Number(request.params.id);
+      const item = decideReviewItem(db, id, 'approved', 'officer');
+      if (!item) return reply.status(409).send({ error: 'Item not found or already decided.' });
 
+      const vc = issueVerifiableCredential(item.payload as Record<string, unknown>, keys);
+      upsertDocumentRecord(db, id, 'approved', vc);
       console.log('[Ministry] ✓ Verifiable Credential issued. ID:', vc.id);
-      return reply.status(200).send(vc);
+      return { item, verifiableCredential: vc };
+    }
+  );
+
+  app.post<{ Params: { id: string }; Body: { note?: string } }>(
+    '/api/pending/:id/reject',
+    { preHandler: requireSession },
+    async (request, reply) => {
+      const id = Number(request.params.id);
+      const item = decideReviewItem(db, id, 'rejected', 'officer', request.body?.note);
+      if (!item) return reply.status(409).send({ error: 'Item not found or already decided.' });
+
+      upsertDocumentRecord(db, id, 'rejected', null);
+      return { item };
     }
   );
 
@@ -182,13 +296,21 @@ async function buildServer(keys: KeyPair): Promise<typeof app> {
 
 const start = async (): Promise<void> => {
   const keys = await loadOrGenerateKeys();
-  await buildServer(keys);
-  await app.listen({ port: 3001, host: '0.0.0.0' });
-  console.log('[Ministry] ✓ Ministry of Trade API — http://localhost:3001');
+  const db = openMinistryDb(DB_PATH);
+  const app = await buildServer(keys, db);
+  await app.listen({ port: PORT, host: '0.0.0.0' });
+  console.log(`[Ministry] ✓ Ministry of Trade API — http://localhost:${PORT}`);
   console.log('[Ministry] DID:', MINISTRY_DID);
 };
 
-start().catch((err) => {
-  console.error('[Ministry] Startup error:', err);
-  process.exit(1);
-});
+// Only auto-starts when run directly (`node dist/index.js` / `ts-node src/index.ts`) — importing
+// this module from a test (to exercise the real route wiring against an ephemeral port instead
+// of a duplicated inline copy) must not also bind the real MINISTRY_PORT. `VITEST` is set
+// automatically by the test runner (https://vitest.dev/config/#test-env), a more portable check
+// here than `require.main === module` under Vitest's own module transform.
+if (!process.env.VITEST) {
+  start().catch((err) => {
+    console.error('[Ministry] Startup error:', err);
+    process.exit(1);
+  });
+}
