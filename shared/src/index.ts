@@ -10,5 +10,7 @@ export * from './attestation/verify';
 export * from './agent-core/keys';
 export * from './agent-core/server';
 export * from './agent-core/transactionLog';
+export * from './agent-core/reviewQueue';
+export * from './agent-core/simpleAuth';
 export * from './evidence/types';
 export * from './evidence/log';
