@@ -3,7 +3,7 @@
  * in-flight guard so overlapping ticks are skipped), but polling an HTTP status endpoint instead
  * of chain state. Drives a submission from `awaiting_ministry_approval` through to
  * `settled`/`rejected`/`failed`, automatically and unattended — everything from here on
- * (Ministry's decision already made, Agent -> Committee -> L2) has no human gate, unchanged
+ * (Ministry's decision already made, Agent -> L2) has no human gate, unchanged
  * from before this work.
  *
  * A network error talking to Ministry or the Agent is caught and logged, then retried next
@@ -60,9 +60,9 @@ async function checkMinistryDecision(
   }
 }
 
-/** Everything after the VC exists — Agent -> Committee -> L2 — is unchanged from before this
- * work: Broker just calls Agent's existing `POST /api/process`, exactly like the old one-shot
- * CLI script did. */
+/** Everything after the VC exists — Agent -> L2 — is unchanged from before this work: Broker
+ * just calls Agent's existing `POST /api/process`, exactly like the old one-shot CLI script
+ * did. (Agent itself no longer calls a Committee — see the no-Committee pipeline change.) */
 async function runRestOfPipeline(
   db: BrokerDb,
   submissionId: number,
@@ -79,7 +79,7 @@ async function runRestOfPipeline(
     const body = (await res.json()) as AgentProcessResponse & { error?: string };
     if (!res.ok) {
       updateSubmission(db, submissionId, { status: 'failed', error: body.error ?? `Agent HTTP ${res.status}` });
-      console.error(`[Broker] Submission ${submissionId} failed at Agent/Committee/L2:`, body.error);
+      console.error(`[Broker] Submission ${submissionId} failed at Agent/L2:`, body.error);
       return;
     }
 

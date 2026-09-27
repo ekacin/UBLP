@@ -7,12 +7,9 @@ import {
   combinedSignatureHash,
   sha256Hash,
   sp1VerifyProof,
-  blsVerifyThreshold,
-  blsGroupKeyHash,
 } from '@ublp/shared';
 import {
   UBLPVerifiablePresentation,
-  CommitteeAttestation,
   L2SettleRecord,
   L2SettleResponse,
 } from '@ublp/zk-customs-types';
@@ -21,7 +18,6 @@ const app = Fastify({ logger: false });
 const DB_PATH = path.join(__dirname, '..', 'data', 'settled.json');
 const REVOKED_PATH = path.join(__dirname, '..', 'data', 'revoked_keys.json');
 const MINISTRY_URL = process.env.MINISTRY_URL ?? 'http://localhost:3001';
-const COMMITTEE_URL = process.env.COMMITTEE_URL ?? 'http://localhost:3004';
 
 /**
  * K-1 fix: Proof mode is determined from the L2 env, not from the client.
@@ -39,11 +35,6 @@ interface RevokedKeyEntry {
 
 let authorizedPublicKeys: Set<string> = new Set();
 let revokedKeys: Map<string, string> = new Map(); // PEM → compromise timestamp
-
-// K-2: L2's own store — doesn't trust the pubkeys inside the attestation
-let committeeGroupKeyHash: string | null = null;
-let committeeMembers: Array<{ memberId: string; blsPublicKey: string }> = [];
-let committeeThreshold = 2;
 
 async function loadRevokedKeys(): Promise<Map<string, string>> {
   if (!fs.existsSync(REVOKED_PATH)) return new Map();
@@ -76,33 +67,12 @@ async function syncMinistryPublicKey(): Promise<boolean> {
   }
 }
 
-async function syncCommitteeInfo(): Promise<boolean> {
-  try {
-    const res = await fetch(`${COMMITTEE_URL}/api/info`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = (await res.json()) as {
-      groupKeyHash: string;
-      threshold: number;
-      members: Array<{ memberId: string; blsPublicKey: string }>;
-    };
-    committeeGroupKeyHash = data.groupKeyHash;
-    committeeMembers = data.members;
-    committeeThreshold = data.threshold;
-    console.log('[L2 Verifier] ✓ Committee BLS info synced. groupKeyHash:', committeeGroupKeyHash?.slice(0, 16) + '…');
-    return true;
-  } catch (err) {
-    console.warn('[L2 Verifier] ✗ Failed to load committee info:', (err as Error).message);
-    return false;
-  }
-}
-
 function syncWithRetry(maxAttempts = 12, baseDelayMs = 1000): void {
   let attempt = 0;
   const tryOnce = async (): Promise<void> => {
     attempt++;
     const ministryOk = await syncMinistryPublicKey();
-    const committeeOk = await syncCommitteeInfo();
-    if (ministryOk && committeeOk) return;
+    if (ministryOk) return;
     if (attempt >= maxAttempts) {
       console.error(`[L2 Verifier] ✗ Sync failed after ${maxAttempts} attempts.`);
       return;
@@ -112,47 +82,6 @@ function syncWithRetry(maxAttempts = 12, baseDelayMs = 1000): void {
     setTimeout(() => void tryOnce(), delay);
   };
   void tryOnce();
-}
-
-// ─── Committee BLS Attestation Verification (K-2 fix) ────────────────────────
-//
-// L2 knows the committee already verified the ZK proof, but it also independently
-// verifies the BLS signature. Trust chain: ZK (agent) + BLS (committee) → L2.
-
-async function verifyCommitteeAttestation(
-  attestation: CommitteeAttestation,
-  documentHash: string,
-  documentIdHash: string
-): Promise<{ valid: boolean; reason?: string }> {
-  if (!committeeGroupKeyHash || committeeMembers.length === 0) {
-    return { valid: false, reason: 'L2 has not synced committee info yet.' };
-  }
-  if (attestation.groupKeyHash !== committeeGroupKeyHash) {
-    return { valid: false, reason: 'groupKeyHash mismatch — forged or stale attestation.' };
-  }
-
-  const allPubKeys = committeeMembers.map((m) => m.blsPublicKey);
-  const recomputed = blsGroupKeyHash(allPubKeys);
-  if (recomputed !== committeeGroupKeyHash) {
-    return { valid: false, reason: 'groupKeyHash recompute mismatch — L2 member list is corrupted.' };
-  }
-
-  const memberMap = new Map(committeeMembers.map((m) => [m.memberId, m.blsPublicKey]));
-  const signerPubKeys: string[] = [];
-  const unknownSigners: string[] = [];
-
-  for (const signerId of attestation.signerIds) {
-    const pk = memberMap.get(signerId);
-    if (pk) signerPubKeys.push(pk);
-    else unknownSigners.push(signerId);
-  }
-
-  if (unknownSigners.length > 0) {
-    return { valid: false, reason: `Unknown signers: ${unknownSigners.join(', ')}` };
-  }
-
-  const msgHex = combinedSignatureHash(documentHash, documentIdHash);
-  return blsVerifyThreshold(attestation.aggregatedSignature, msgHex, signerPubKeys, attestation.threshold);
 }
 
 // ─── DB ───────────────────────────────────────────────────────────────────────
@@ -212,8 +141,7 @@ app.post<{ Body: VerifyRequest }>(
               proof: {
                 type: 'object',
                 required: [
-                  'proofSystem', 'publicValues', 'proofBytes',
-                  'ministryPublicKey', 'committeeAttestation',
+                  'proofSystem', 'publicValues', 'proofBytes', 'ministryPublicKey',
                 ],
                 properties: {
                   proofSystem: { type: 'string', minLength: 1 },
@@ -228,11 +156,6 @@ app.post<{ Body: VerifyRequest }>(
                   },
                   proofBytes: { type: 'string', minLength: 1 },
                   ministryPublicKey: { type: 'string', minLength: 1 },
-                  // committeeAttestation lives inside the VP proof — the agent gets it after having the ZK proof verified
-                  committeeAttestation: {
-                    type: 'object',
-                    required: ['type', 'threshold', 'groupKeyHash', 'signerIds', 'aggregatedSignature'],
-                  },
                 },
               },
             },
@@ -253,9 +176,6 @@ app.post<{ Body: VerifyRequest }>(
     const documentIdHash = vpProof.publicValues.documentIdHash;
     const holderPubKeyHash = vpProof.publicValues.holderPubKeyHash;
     const holderDid = presentation.holder;
-
-    // committeeAttestation now lives inside the VP proof (not the VC)
-    const committeeAttestation = vpProof.committeeAttestation;
 
     console.log('[L2 Verifier] VP received. Holder:', holderDid);
     console.log('[L2 Verifier] documentIdHash:', documentIdHash);
@@ -285,17 +205,7 @@ app.post<{ Body: VerifyRequest }>(
       return reply.status(400).send({ error: 'holderPubKeyHash invalid (K-3).' });
     }
 
-    // ── 3. Committee BLS attestation (K-2) ────────────────────────────────────
-    // L2 verifies independently — it doesn't just trust that the committee verified
-    // the ZK proof. Two layers: Committee (ZK → BLS) + L2 (independent BLS verify).
-    const committeeResult = await verifyCommitteeAttestation(committeeAttestation, documentHash, documentIdHash);
-    if (!committeeResult.valid) {
-      console.error('[L2 Verifier] ✗ Committee attestation failed:', committeeResult.reason);
-      return reply.status(400).send({ error: `Committee attestation invalid: ${committeeResult.reason}` });
-    }
-    console.log('[L2 Verifier] ✓ Committee BLS attestation verified.');
-
-    // ── 4. K-1: ZK Proof / ECDSA ─────────────────────────────────────────────
+    // ── 3. K-1: ZK Proof / ECDSA ──────────────────────────────────────────────
     const proofSystem = vpProof.proofSystem;
 
     if (PROOF_MODE === 'sp1') {
@@ -328,7 +238,7 @@ app.post<{ Body: VerifyRequest }>(
     }
     console.log('[L2 Verifier] ✓ Proof verified. [', proofSystem, ']');
 
-    // ── 5. Replay + atomic record ─────────────────────────────────────────────
+    // ── 4. Replay + atomic record ─────────────────────────────────────────────
     return await dbMutex.runExclusive(async () => {
       const db = await loadDB();
       const duplicate = db.find((r) => r.documentIdHash === documentIdHash);
@@ -360,11 +270,9 @@ app.get('/api/records', async () => loadDB());
 
 app.post('/api/sync', async () => {
   const ministryOk = await syncMinistryPublicKey();
-  const committeeOk = await syncCommitteeInfo();
   return {
-    success: ministryOk && committeeOk,
+    success: ministryOk,
     authorizedCount: authorizedPublicKeys.size,
-    committeeGroupKeyHash,
     proofMode: PROOF_MODE,
   };
 });

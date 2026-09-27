@@ -16,13 +16,6 @@
 //   the hash correctly outside. The circuit only takes a fixed 32-byte hash; cycle
 //   savings 80%+.
 //
-// NOTE — future v0.2 BLS migration design (groupKeyHash public input):
-//   When BLS committee verification moves into the circuit, groupKeyHash must NOT
-//   be a compile-time constant — it must be a public input. L2 passes the current
-//   committee hash into the circuit; internally it verifies
-//   SHA256(sort(signerPubKeys)) == groupKeyHash. That way, when a committee member
-//   changes, the ZK circuit doesn't need touching — only the L2 state is updated.
-//
 // Public outputs — commit (verified by L2, bound via the Succinct API):
 //   [0] document_hash:         [u8; 32] — SHA256("ublp-doc-v1:" + canonicalJson) — trusted issuer
 //   [1] ministry_pub_key_hash: [u8; 32] — SHA256(ministry_pub_key_raw)

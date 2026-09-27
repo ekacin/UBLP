@@ -3,7 +3,7 @@
  * module's `start` entrypoint; `index.ts` is kept as a `npm run smoke` dev script, see its own
  * header). Exposes a REST API a future frontend (reusing incoterms-escrow's panel patterns) can
  * call: an operator prepares a document, approves it, and everything from "sent to Ministry"
- * onward (Ministry's own human review, then the unchanged Agent -> Committee -> L2 pipeline)
+ * onward (Ministry's own human review, then the unchanged Agent -> L2 pipeline)
  * proceeds automatically, tracked in `submissions`.
  */
 

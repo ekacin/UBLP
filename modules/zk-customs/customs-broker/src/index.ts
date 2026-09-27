@@ -4,8 +4,8 @@
  * NOT the module's entrypoint anymore — `server.ts` (`npm start`/`npm run dev`) is the real,
  * persistent backend with human review gates at both Ministry and Broker (see the
  * backend-foundation plan). This script exercises Ministry's new review-then-sign flow and the
- * unchanged Agent -> Committee -> L2 leg directly, without going through Broker's own server/
- * poller — useful to isolate whether Ministry/Agent/Committee/L2 are wired correctly on their
+ * unchanged Agent -> L2 leg directly, without going through Broker's own server/
+ * poller — useful to isolate whether Ministry/Agent/L2 are wired correctly on their
  * own. It plays both parts of Ministry's human gate itself (submits, then immediately logs in
  * and approves as the officer) so it can still run start-to-finish as a single script.
  *

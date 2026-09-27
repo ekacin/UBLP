@@ -1,9 +1,9 @@
 /**
  * Generic encrypted-secret-at-rest storage — AGENTS.md Section 5.21.
  *
- * Generalizes the AES-256-GCM + PBKDF2 pattern committee/index.ts and ministry/index.ts each
- * hand-rolled for their own BLS/ECDSA keys, so wallet seeds (and any future per-agent secret)
- * reuse the same proven scheme instead of a third copy.
+ * Generalizes the AES-256-GCM + PBKDF2 pattern ministry/index.ts hand-rolled for its own ECDSA
+ * key, so wallet seeds (and any future per-agent secret) reuse the same proven scheme instead
+ * of a second copy.
  *
  * What this does and doesn't protect against: encrypting the file stops a stolen disk/backup
  * from exposing the secret — the passphrase itself still has to come from somewhere (env var,

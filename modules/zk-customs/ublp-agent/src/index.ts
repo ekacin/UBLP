@@ -10,7 +10,6 @@ import {
   PrivateInputs,
   PublicInputs,
   KeyPair,
-  ZKProof,
   loadOrGenerateAgentKeys,
   createAgentServer,
   startAgentServer,
@@ -20,13 +19,11 @@ import {
 import {
   UBLPVerifiableCredential,
   UBLPVerifiablePresentation,
-  CommitteeAttestation,
   L2SettleResponse,
 } from '@ublp/zk-customs-types';
 
 const app = createAgentServer();
 const L2_VERIFIER_URL = process.env.L2_VERIFIER_URL ?? 'http://localhost:3003';
-const COMMITTEE_URL = process.env.COMMITTEE_URL ?? 'http://localhost:3004';
 const AGENT_DID = process.env.AGENT_DID ?? 'did:ublp:agent:default';
 const AGENT_KEYS_PATH = path.join(__dirname, '..', 'data', 'agent-keypair.json');
 const TRANSACTION_LOG_PATH = path.join(__dirname, '..', 'data', 'transactions.db');
@@ -63,42 +60,6 @@ function signHolderProof(
   return crypto
     .sign(null, payload, { key: agentPrivKey, dsaEncoding: 'ieee-p1363' })
     .toString('base64');
-}
-
-/**
- * Submits the ZK proof to the Committee — the raw document is never shown.
- * The committee verifies the ZK proof → mathematical conviction → BLS signs.
- */
-async function requestCommitteeAttestation(
-  zkProof: ZKProof,
-  publicInputs: PublicInputs,
-  ministryPublicKey: string,
-  ministryPubKeyHash: string
-): Promise<CommitteeAttestation> {
-  const body = {
-    proofBytes: zkProof.ministrySignature,     // proof bytes (Groth16 or ECDSA sig)
-    proofSystem: zkProof.proof_system,
-    publicValues: {
-      documentHash: publicInputs.documentHash,
-      documentIdHash: publicInputs.documentIdHash,
-      ministryPubKeyHash,
-      holderPubKeyHash: zkProof.holderPubKeyHash,
-    },
-    ministryPublicKey,
-  };
-
-  const res = await fetch(`${COMMITTEE_URL}/api/attest`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`[Committee] HTTP ${res.status}: ${text}`);
-  }
-
-  return res.json() as Promise<CommitteeAttestation>;
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -151,8 +112,7 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
                     ministryPublicKey: { type: 'string', minLength: 1 },
                   },
                 },
-                // committeeAttestation is no longer in the VC — the committee verifies the agent's ZK proof
-              },
+},
             },
           },
           additionalProperties: false,
@@ -214,27 +174,7 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
       const pubKeyRaw = pubKeyDer.subarray(pubKeyDer.length - 65);
       const pubKeyHash = crypto.createHash('sha256').update(pubKeyRaw).digest('hex');
 
-      // ── 6. Submit the ZK proof to the committee — the raw document is never shown (trade secret) ──
-      // The committee verifies the ZK proof → mathematically convinced → BLS signs.
-      // No more "blind" signing.
-      console.log('[UBLP Agent] Submitting ZK proof to the committee →', COMMITTEE_URL);
-      let committeeAttestation: CommitteeAttestation;
-      try {
-        committeeAttestation = await requestCommitteeAttestation(
-          zkProof,
-          publicInputs,
-          vcProof.ministryPublicKey,
-          pubKeyHash
-        );
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error('[UBLP Agent] ✗ Committee attestation failed:', msg);
-        logVerificationEvent(cs.documentId, 'customs-verification-rejected', { reason: 'committee-attestation-failed', detail: msg });
-        return reply.status(502).send({ error: 'Committee could not verify the ZK proof.', detail: msg }) as never;
-      }
-      console.log('[UBLP Agent] ✓ Committee BLS attestation received. signers:', committeeAttestation.signerIds.length);
-
-      // ── 7. Minimal VC copy for the VP ────────────────────────────────────────
+      // ── 6. Minimal VC copy for the VP ────────────────────────────────────────
       //
       // credentialSubject: only { id, documentId } — NO hashes.
       // documentHash / documentIdHash are now read ONLY from proof.publicValues.
@@ -260,10 +200,9 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
         },
       };
 
-      // ── 9. Verifiable Presentation ───────────────────────────────────────────
-      // committeeAttestation lives inside the VP proof — no longer in the VC.
+      // ── 7. Verifiable Presentation ───────────────────────────────────────────
       // K-3: holderSignature / holderPublicKey do NOT go into the VP.
-      // publicValues = single source of truth: L2 and Committee read from here.
+      // publicValues = single source of truth: L2 reads from here.
       const presentation: UBLPVerifiablePresentation = {
         '@context': [
           'https://www.w3.org/2018/credentials/v1',
@@ -285,11 +224,10 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
           },
           proofBytes: zkProof.ministrySignature,
           ministryPublicKey: vcProof.ministryPublicKey,
-          committeeAttestation,                          // carried inside the VP proof
         },
       };
 
-      // ── 10. Send to L2 ───────────────────────────────────────────────────────
+      // ── 8. Send to L2 ────────────────────────────────────────────────────────
       console.log('[UBLP Agent] Sending VP to L2 →', L2_VERIFIER_URL);
 
       let l2Response: Response;
@@ -335,7 +273,7 @@ const start = async (): Promise<void> => {
   await startAgentServer(app, { port: 3002, host: '0.0.0.0' });
   console.log('[UBLP Agent] ✓ UBLP Agent — http://localhost:3002');
   console.log('[UBLP Agent] DID:', AGENT_DID);
-  console.log('[UBLP Agent] Mode: ZK proof → Committee verify → BLS → L2');
+  console.log('[UBLP Agent] Mode: ZK proof → L2');
 };
 
 start().catch((err) => {

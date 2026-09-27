@@ -2,27 +2,17 @@
  * W3C Verifiable Credentials / Verifiable Presentation types
  * Standard: https://www.w3.org/TR/vc-data-model/
  *
- * Flow (v0.2 architecture — Agent-first ZK):
- *   Ministry → ECDSA-signed VC (NO committeeAttestation)
- *   Agent    → produces ZK Proof → submits to Committee (raw document never shown)
- *   Committee→ verifies ZK → mathematical conviction → BLS signs
- *   L2       → verifies both the ZK proof and committeeAttestation in the VP
+ * Flow (v0.3 architecture — no Committee):
+ *   Ministry → ECDSA-signed VC, now gated behind a human officer review (see ministry/src/index.ts)
+ *   Agent    → produces ZK Proof → sends the VP straight to L2
+ *   L2       → independently verifies the ZK proof itself
  *
- * committeeAttestation is no longer in the VC, it's inside the VP proof.
- * Reason: the committee signs based on the Agent's ZK proof, not the Ministry's blind approval.
+ * The Committee service (BLS threshold attestation) was removed: it only ever re-ran the same
+ * cryptographic check L2 already performs independently (both called the identical
+ * sp1VerifyProof/verifySignatureOverHash functions from @ublp/shared) — no human review or
+ * distinct institutional judgment was actually happening in it, so its BLS signature added no
+ * verifiable trust beyond what L2's own check already provides.
  */
-
-// ─── Committee BLS Threshold ──────────────────────────────────────────────────
-
-export interface CommitteeAttestation {
-  type: 'BLSThreshold';
-  threshold: number;
-  totalMembers: number;
-  groupKeyHash: string;
-  signerIds: string[];
-  aggregatedSignature: string;
-  attestedAt: string;
-}
 
 // ─── Verifiable Credential (issued by the Ministry — plain ECDSA signature) ──
 
@@ -52,8 +42,6 @@ export interface UBLPVerifiableCredential {
   issuanceDate: string;
   credentialSubject: VCCredentialSubject;
   proof: VCProof;
-  // committeeAttestation REMOVED — now inside the VP proof.
-  // The committee doesn't see the document, it sees the ZK proof; the proof is produced by the agent.
 }
 
 // ─── Verifiable Presentation (produced by the Agent, sent to L2) ─────────────
@@ -78,12 +66,6 @@ export interface VPProof {
   publicValues: VPProofPublicValues;
   proofBytes: string;
   ministryPublicKey: string;
-  /**
-   * committeeAttestation MOVED HERE (from the VC to the VP).
-   * The committee stamps the BLS signature after verifying the agent's ZK proof.
-   * L2: independently verifies both the ZK proof and the BLS attestation.
-   */
-  committeeAttestation: CommitteeAttestation;
 }
 
 export interface UBLPVerifiablePresentation {
