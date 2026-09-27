@@ -17,12 +17,9 @@ import {
 import {
   UBLPVerifiablePresentation,
   UBLPVerifiableCredential,
-  CommitteeAttestation,
   L2SettleRecord,
   L2SettleResponse,
 } from '../../types/src/vc';
-
-import type { blsVerifyThreshold, blsGroupKeyHash } from '../../../../shared/src/crypto/blsCrypto';
 
 const ministryKeys = generateKeyPair();
 const unauthorizedKeys = generateKeyPair();
@@ -197,15 +194,6 @@ function makeSamplePresentation(overrides?: {
       },
       proofBytes: sig,
       ministryPublicKey: pubKey,
-      committeeAttestation: {
-        type: 'BLSThreshold',
-        threshold: 2,
-        totalMembers: 3,
-        groupKeyHash: 'test-group-hash',
-        signerIds: ['member-1', 'member-2'],
-        aggregatedSignature: 'test-agg-sig',
-        attestedAt: new Date().toISOString(),
-      },
     },
   };
 }

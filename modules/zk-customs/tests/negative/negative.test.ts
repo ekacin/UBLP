@@ -14,16 +14,6 @@ import {
   generateZKProof,
 } from '../../../../shared/src/crypto/documentCrypto';
 
-import {
-  blsGenerateKeyPair,
-  blsSign,
-  blsVerify,
-  blsAggregateSignatures,
-  blsAggregatePublicKeys,
-  blsGroupKeyHash,
-  blsVerifyThreshold,
-} from '../../../../shared/src/crypto/blsCrypto';
-
 const ministryKeys = generateKeyPair();
 const agentKeys = generateKeyPair();
 const attackerKeys = generateKeyPair();
@@ -147,61 +137,6 @@ describe('Negative: ZK Proof Attacks', () => {
         { documentHash: docHash, ministryPublicKey: ministryKeys.publicKey, documentIdHash: idHash }
       );
     }).toThrow('holder');
-  });
-});
-
-describe('Negative: BLS Attacks', () => {
-  it('BLS verify rejects wrong public key', async () => {
-    const kp = blsGenerateKeyPair();
-    const msg = 'aa' + 'bb'.repeat(31);
-    const sig = await blsSign(msg, kp.privateKey);
-    const other = blsGenerateKeyPair();
-    const valid = await blsVerify(sig, msg, other.publicKey);
-    expect(valid).toBe(false);
-  });
-
-  it('BLS verify rejects wrong message', async () => {
-    const kp = blsGenerateKeyPair();
-    const msg = 'cc' + 'dd'.repeat(31);
-    const sig = await blsSign(msg, kp.privateKey);
-    const valid = await blsVerify(sig, msg + 'ff', kp.publicKey);
-    expect(valid).toBe(false);
-  });
-
-  it('BLS threshold rejects too few signers', async () => {
-    const members = [blsGenerateKeyPair(), blsGenerateKeyPair(), blsGenerateKeyPair()];
-    const msg = 'ee' + 'ff'.repeat(31);
-    const sigs = await Promise.all(members.map((m) => blsSign(msg, m.privateKey)));
-
-    const aggSig = blsAggregateSignatures([sigs[0]]);
-    const result = await blsVerifyThreshold(aggSig, msg, [members[0].publicKey], 2);
-    expect(result.valid).toBe(false);
-    expect(result.reason).toContain('Threshold');
-  });
-
-  it('BLS threshold rejects wrong signer subset (attacker pubkeys)', async () => {
-    const members = [blsGenerateKeyPair(), blsGenerateKeyPair(), blsGenerateKeyPair()];
-    const attackers = [blsGenerateKeyPair(), blsGenerateKeyPair()];
-    const msg = '00' + '11'.repeat(31);
-    const sigs = await Promise.all(members.map((m) => blsSign(msg, m.privateKey)));
-
-    const aggSig = blsAggregateSignatures([sigs[0], sigs[1]]);
-    const wrongPubs = [attackers[0].publicKey, attackers[1].publicKey];
-    const result = await blsVerifyThreshold(aggSig, msg, wrongPubs, 2);
-    expect(result.valid).toBe(false);
-  });
-
-  it('BLS aggregate with empty signature list throws', () => {
-    expect(() => blsAggregateSignatures([])).toThrow();
-  });
-
-  it('BLS groupKeyHash changes when any key changes', () => {
-    const members = [blsGenerateKeyPair(), blsGenerateKeyPair(), blsGenerateKeyPair()];
-    const original = blsGroupKeyHash(members.map(m => m.publicKey));
-
-    const modified = [members[0].publicKey, members[1].publicKey, blsGenerateKeyPair().publicKey];
-    const modifiedHash = blsGroupKeyHash(modified);
-    expect(original).not.toBe(modifiedHash);
   });
 });
 

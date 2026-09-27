@@ -2,9 +2,9 @@
  * Integration test against Customs Broker's REAL route wiring (`customs-broker/src/server.ts`'s
  * exported `buildServer`), with a REAL Ministry instance (`ministry/src/index.ts`'s `buildServer`)
  * behind it on its own ephemeral port — not mocks, not a duplicated inline copy. Exercises the
- * operator-approval -> Ministry-submit -> officer-approval leg end to end. The Agent/Committee/
- * L2 leg is intentionally NOT exercised here (that part of the pipeline is unchanged by this
- * work and already covered by the existing e2e/agent/committee/l2-verifier tests) — these tests
+ * operator-approval -> Ministry-submit -> officer-approval leg end to end. The Agent/L2 leg is
+ * intentionally NOT exercised here (that part of the pipeline is unchanged by this work and
+ * already covered by the existing e2e/agent/l2-verifier tests) — these tests
  * point UBLP_AGENT_URL at an address nothing listens on and assert the submission correctly
  * lands on `vc_received` (poller retries rather than marking it failed), matching the
  * resilience behavior described in the backend-foundation plan.

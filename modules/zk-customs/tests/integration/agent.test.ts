@@ -73,16 +73,6 @@ async function buildAgentServer() {
       const pubKeyRaw = pubKeyDer.subarray(pubKeyDer.length - 65);
       const pubKeyHash = crypto.createHash('sha256').update(pubKeyRaw).digest('hex');
 
-      const mockCommitteeAttestation = {
-        type: 'BLSThreshold' as const,
-        threshold: 2,
-        totalMembers: 3,
-        groupKeyHash: 'mock-group-key-hash-' + sha256Hash('test'),
-        signerIds: ['member-1', 'member-2'],
-        aggregatedSignature: 'mock-agg-sig',
-        attestedAt: new Date().toISOString(),
-      };
-
       const vcForVP: UBLPVerifiableCredential = {
         ...vc,
         credentialSubject: { id: holderDid, documentId: cs.documentId },
@@ -107,7 +97,6 @@ async function buildAgentServer() {
           },
           proofBytes: zkProof.ministrySignature,
           ministryPublicKey: vc.proof.ministryPublicKey,
-          committeeAttestation: mockCommitteeAttestation,
         },
       };
 
@@ -172,7 +161,6 @@ describe('Agent Service Integration', () => {
     expect(result.presentation.holder).toBe(AGENT_DID);
     expect(result.presentation.proof.publicValues.documentHash).toHaveLength(64);
     expect(result.presentation.proof.publicValues.holderPubKeyHash).toHaveLength(64);
-    expect(result.presentation.proof.committeeAttestation).toBeDefined();
     expect(result.l2Result.status).toBe('APPROVED');
   });
 

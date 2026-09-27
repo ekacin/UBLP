@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import type {
   UBLPVerifiableCredential,
   UBLPVerifiablePresentation,
-  CommitteeAttestation,
   VPProofPublicValues,
   L2SettleRecord,
   L2SettleResponse,
@@ -97,24 +96,12 @@ describe('VP type structure', () => {
         },
         proofBytes: 'base64-proof-bytes',
         ministryPublicKey: 'key',
-        committeeAttestation: {
-          type: 'BLSThreshold',
-          threshold: 2,
-          totalMembers: 3,
-          groupKeyHash: 'gh'.repeat(32),
-          signerIds: ['did:ublp:committee:customs-authority', 'did:ublp:committee:importer-chamber'],
-          aggregatedSignature: 'bls-sig-hex',
-          attestedAt: '2025-01-15T11:00:00.000Z',
-        },
       },
     };
 
     expect(vp.type).toContain('VerifiablePresentation');
     expect(vp.type).toContain('UBLPZKPresentation');
     expect(vp.verifiableCredential).toHaveLength(1);
-    expect(vp.proof.committeeAttestation.type).toBe('BLSThreshold');
-    expect(vp.proof.committeeAttestation.threshold).toBe(2);
-    expect(vp.proof.committeeAttestation.totalMembers).toBe(3);
     expect(vp.proof.publicValues.documentHash).toHaveLength(64);
     expect(vp.proof.publicValues.holderPubKeyHash).toHaveLength(64);
   });
@@ -128,24 +115,6 @@ describe('VP type structure', () => {
     };
     expect(vpProof.documentHash).toHaveLength(64);
     expect(vpProof.pubKeyHash).toHaveLength(64);
-  });
-});
-
-describe('CommitteeAttestation', () => {
-  it('enforces BLS threshold invariant', () => {
-    const att: CommitteeAttestation = {
-      type: 'BLSThreshold',
-      threshold: 2,
-      totalMembers: 3,
-      groupKeyHash: 'hash',
-      signerIds: ['a', 'b'],
-      aggregatedSignature: 'sig',
-      attestedAt: '2025-01-15T11:00:00.000Z',
-    };
-
-    expect(att.signerIds.length).toBeGreaterThanOrEqual(att.threshold);
-    expect(att.signerIds.length).toBeLessThanOrEqual(att.totalMembers);
-    expect(att.threshold).toBeLessThanOrEqual(att.totalMembers);
   });
 });
 

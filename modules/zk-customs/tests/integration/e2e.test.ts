@@ -21,18 +21,8 @@ import {
   PublicInputs,
 } from '../../../../shared/src/crypto/documentCrypto';
 import {
-  blsGenerateKeyPair,
-  blsSign,
-  blsVerify,
-  blsAggregateSignatures,
-  blsAggregatePublicKeys,
-  blsGroupKeyHash,
-  blsVerifyThreshold,
-} from '../../../../shared/src/crypto/blsCrypto';
-import {
   UBLPVerifiableCredential,
   UBLPVerifiablePresentation,
-  CommitteeAttestation,
   L2SettleRecord,
   L2SettleResponse,
 } from '../../types/src/vc';
@@ -43,15 +33,6 @@ const ministryKeys = generateKeyPair();
 const agentKeys = generateKeyPair();
 const MINISTRY_DID = 'did:ublp:ministry:e2e';
 const AGENT_DID = 'did:ublp:agent:e2e';
-const THRESHOLD = 2;
-const TOTAL_MEMBERS = 3;
-
-const committeeMembers = Array.from({ length: TOTAL_MEMBERS }, (_, i) => ({
-  memberId: `did:ublp:committee:member-${i + 1}`,
-  ...blsGenerateKeyPair(),
-}));
-
-const committeeGroupKeyHash = blsGroupKeyHash(committeeMembers.map(m => m.publicKey));
 
 // ─── Services ─────────────────────────────────────────────────────────────────
 
@@ -140,27 +121,6 @@ async function buildAgent(ministryUrl: string): Promise<{ app: ReturnType<typeof
       const pubKeyRaw = pubKeyDer.subarray(pubKeyDer.length - 65);
       const pubKeyHash = crypto.createHash('sha256').update(pubKeyRaw).digest('hex');
 
-      // Committee attestation (simulated)
-      const msgHex = combinedSignatureHash(documentHash, documentIdHash);
-      const partialSigs: string[] = [];
-      const signerIds: string[] = [];
-      for (let i = 0; i < THRESHOLD; i++) {
-        const sig = await blsSign(msgHex, committeeMembers[i].privateKey);
-        partialSigs.push(sig);
-        signerIds.push(committeeMembers[i].memberId);
-      }
-      const aggSig = blsAggregateSignatures(partialSigs);
-
-      const committeeAttestation: CommitteeAttestation = {
-        type: 'BLSThreshold',
-        threshold: THRESHOLD,
-        totalMembers: TOTAL_MEMBERS,
-        groupKeyHash: committeeGroupKeyHash,
-        signerIds,
-        aggregatedSignature: aggSig,
-        attestedAt: new Date().toISOString(),
-      };
-
       const vcForVP: UBLPVerifiableCredential = {
         ...vc,
         credentialSubject: { id: holderDid, documentId: cs.documentId },
@@ -180,7 +140,6 @@ async function buildAgent(ministryUrl: string): Promise<{ app: ReturnType<typeof
           publicValues: { documentHash, pubKeyHash, documentIdHash, holderPubKeyHash: zkProof.holderPubKeyHash },
           proofBytes: zkProof.ministrySignature,
           ministryPublicKey: vc.proof.ministryPublicKey,
-          committeeAttestation,
         },
       };
 
@@ -230,21 +189,7 @@ async function buildL2Verifier(): Promise<{ app: ReturnType<typeof Fastify>; por
         return reply.status(400).send({ error: 'holderPubKeyHash gecersiz.' });
       }
 
-      // 3. BLS committee attestation verification
-      const committeeAtt = vpProof.committeeAttestation;
-      if (committeeAtt.groupKeyHash !== committeeGroupKeyHash) {
-        return reply.status(400).send({ error: 'groupKeyHash uyusmazligi.' });
-      }
-
-      const memberMap = new Map(committeeMembers.map(m => [m.memberId, m.publicKey]));
-      const signerPubs = committeeAtt.signerIds.map(id => memberMap.get(id)!);
-      const msgHex = combinedSignatureHash(documentHash, documentIdHash);
-      const blsResult = await blsVerifyThreshold(committeeAtt.aggregatedSignature, msgHex, signerPubs, committeeAtt.threshold);
-      if (!blsResult.valid) {
-        return reply.status(400).send({ error: `BLS gecersiz: ${blsResult.reason}` });
-      }
-
-      // 4. ZK proof verification (mock mode)
+      // 3. ZK proof verification (mock mode)
       const proofValid = verifySignatureOverHash(
         combinedSignatureHash(documentHash, documentIdHash),
         vpProof.proofBytes,
@@ -254,7 +199,7 @@ async function buildL2Verifier(): Promise<{ app: ReturnType<typeof Fastify>; por
         return reply.status(400).send({ error: 'Proof dogrulamasi basarisiz.' });
       }
 
-      // 5. Replay protection
+      // 4. Replay protection
       return await dbMutex.runExclusive(async () => {
         const db: L2SettleRecord[] = fs.existsSync(dbPath)
           ? JSON.parse(fs.readFileSync(dbPath, 'utf8'))
@@ -335,12 +280,9 @@ describe('E2E: Complete Customs Clearance Flow', () => {
     const documentIdHash = sha256Hash(doc.documentId);
     const sigValid = verifySignature(doc, vc.proof.proofValue, vc.proof.ministryPublicKey, documentIdHash);
     expect(sigValid).toBe(true);
-
-    const committeeAtt = (vc as Record<string, unknown>).committeeAttestation;
-    expect(committeeAtt).toBeUndefined();
   });
 
-  it('2. Agent processes VC → ZK proof → Committee BLS → VP constructed', async () => {
+  it('2. Agent processes VC → ZK proof → VP constructed', async () => {
     const doc = {
       documentId: 'DOC-E2E-' + crypto.randomUUID(),
       holderDid: AGENT_DID,
@@ -376,22 +318,9 @@ describe('E2E: Complete Customs Clearance Flow', () => {
     expect(pres.proof.publicValues.holderPubKeyHash).toHaveLength(64);
     expect(pres.proof.publicValues.pubKeyHash).toHaveLength(64);
     expect(pres.proof.publicValues.documentIdHash).toHaveLength(64);
-
-    // Committee attestation
-    expect(pres.proof.committeeAttestation.type).toBe('BLSThreshold');
-    expect(pres.proof.committeeAttestation.signerIds.length).toBeGreaterThanOrEqual(THRESHOLD);
-    expect(pres.proof.committeeAttestation.groupKeyHash).toBe(committeeGroupKeyHash);
-
-    // Verify BLS threshold on attestation
-    const att = pres.proof.committeeAttestation;
-    const msgHex = combinedSignatureHash(pres.proof.publicValues.documentHash, pres.proof.publicValues.documentIdHash);
-    const memberMap = new Map(committeeMembers.map(m => [m.memberId, m.publicKey]));
-    const signerPubs = att.signerIds.map(id => memberMap.get(id)!);
-    const blsResult = await blsVerifyThreshold(att.aggregatedSignature, msgHex, signerPubs, att.threshold);
-    expect(blsResult.valid).toBe(true);
   });
 
-  it('3. Full flow: Broker → Ministry → Agent → L2 settle (mocked committee)', async () => {
+  it('3. Full flow: Broker → Ministry → Agent → L2 settle', async () => {
     const doc = {
       documentId: 'DOC-E2E-FULL-' + crypto.randomUUID(),
       holderDid: AGENT_DID,
@@ -410,7 +339,7 @@ describe('E2E: Complete Customs Clearance Flow', () => {
     expect(vcRes.status).toBe(200);
     const vc: UBLPVerifiableCredential = await vcRes.json();
 
-    // Step 2: Agent processes → gets VP with committee attestation
+    // Step 2: Agent processes → gets VP
     const agentRes = await fetch(`http://127.0.0.1:${services.agent.port}/api/process`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -473,44 +402,7 @@ describe('E2E: Complete Customs Clearance Flow', () => {
     expect(l2Res2.status).toBe(409);
   });
 
-  it('5. BLS committee attestation is independently verifiable', async () => {
-    const doc = {
-      documentId: 'DOC-E2E-BLS-' + crypto.randomUUID(),
-      holderDid: AGENT_DID,
-    };
-
-    const vcRes = await fetch(`http://127.0.0.1:${services.ministry.port}/api/approve`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(doc),
-    });
-    const vc: UBLPVerifiableCredential = await vcRes.json();
-
-    const agentRes = await fetch(`http://127.0.0.1:${services.agent.port}/api/process`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ verifiableCredential: vc }),
-    });
-    const agentResult = await agentRes.json();
-    const att: CommitteeAttestation = agentResult.presentation.proof.committeeAttestation;
-
-    // Verify BLS threshold independently (as L2 would)
-    const docHash = agentResult.presentation.proof.publicValues.documentHash;
-    const idHash = agentResult.presentation.proof.publicValues.documentIdHash;
-    const msgHex = combinedSignatureHash(docHash, idHash);
-
-    const memberMap = new Map(committeeMembers.map(m => [m.memberId, m.publicKey]));
-    const signerPubs = att.signerIds.map(id => memberMap.get(id)!);
-
-    const blsResult = await blsVerifyThreshold(att.aggregatedSignature, msgHex, signerPubs, att.threshold);
-    expect(blsResult.valid).toBe(true);
-
-    const recomputedGroupHash = blsGroupKeyHash(committeeMembers.map(m => m.publicKey));
-    expect(att.groupKeyHash).toBe(recomputedGroupHash);
-    expect(att.groupKeyHash).toBe(committeeGroupKeyHash);
-  });
-
-  it('6. Holder identity privacy: raw key never leaves agent', async () => {
+  it('5. Holder identity privacy: raw key never leaves agent', async () => {
     const doc = {
       documentId: 'DOC-E2E-PRIVACY-' + crypto.randomUUID(),
       holderDid: AGENT_DID,
