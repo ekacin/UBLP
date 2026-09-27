@@ -10,7 +10,6 @@ dist/
 # Private keys & credentials — NEVER commit
 **/ministry/keys/
 **/ministry/data/
-**/committee/data/
 **/ublp-agent/data/
 **/l2-verifier-mock/data/
 **/customs-broker/data/

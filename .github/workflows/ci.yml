@@ -335,6 +335,9 @@ jobs:
     name: Full Service Flow Verification
     needs: e2e-tests
     runs-on: ubuntu-latest
+    env:
+      MINISTRY_OPERATOR_PASSPHRASE: ci-test-officer-passphrase
+      MINISTRY_BROKER_API_KEY: ci-test-broker-api-key
 
     steps:
       - uses: actions/checkout@v4
@@ -364,17 +367,19 @@ jobs:
 
       - name: Start services in background
         run: |
-          npm run start:committee &
           npm run start:ministry &
           npm run start:agent &
           npm run start:l2 &
           echo "Waiting for services..."
-          npx wait-on tcp:3004 tcp:3001 tcp:3002 tcp:3003 --timeout=60000
+          npx wait-on tcp:3001 tcp:3002 tcp:3003 --timeout=60000
           echo "All services ready"
         timeout-minutes: 3
 
-      - name: Run customs broker demo
-        run: npm run run:broker
+      # Exercises Ministry's officer-review gate + the unchanged Agent -> L2 leg directly
+      # against the real running processes above — smoke-level only, the vitest integration
+      # suite (test:integration) already covers Ministry's and Broker's own REST APIs in depth.
+      - name: Run customs broker smoke test
+        run: npm run smoke:broker
         timeout-minutes: 2
 
       - name: Fetch settled records
