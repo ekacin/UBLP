@@ -1,4 +1,5 @@
 import Fastify, { FastifyReply, FastifyRequest } from 'fastify';
+import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import crypto from 'crypto';
 import { promisify } from 'util';
@@ -192,6 +193,7 @@ function issueVerifiableCredential(document: Record<string, unknown>, keys: KeyP
 
 export async function buildServer(keys: KeyPair, db: ReturnType<typeof openMinistryDb>) {
   const app = Fastify({ logger: false });
+  await app.register(cors, { origin: true });
   await app.register(rateLimit, { global: false });
 
   app.get('/api/public-key', async () => ({
@@ -257,8 +259,11 @@ export async function buildServer(keys: KeyPair, db: ReturnType<typeof openMinis
 
   // ── Officer-facing (session protected): review queue ──
 
+  // No status filter — returns every document-approval item (awaiting + already decided) so
+  // the panel can split "needs review" from "recently decided" client-side, same pattern as
+  // Broker's GET /api/submissions and escrow's listPending().
   app.get('/api/pending', { preHandler: requireSession }, async () =>
-    listReviewItems(db, { kind: 'document-approval', status: 'awaiting_approval' })
+    listReviewItems(db, { kind: 'document-approval' })
   );
 
   app.post<{ Params: { id: string } }>(
