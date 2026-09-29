@@ -60,7 +60,7 @@ export class SimpleSessionAuthStore {
 /** Same length regardless of where the strings first differ — avoids leaking passphrase length
  * or prefix via response-time differences. Falls back to `false` (never throws) when the two
  * inputs differ in byte length, since `crypto.timingSafeEqual` requires equal-length buffers. */
-function timingSafeEqual(a: string, b: string): boolean {
+export function timingSafeEqual(a: string, b: string): boolean {
   const bufA = Buffer.from(a);
   const bufB = Buffer.from(b);
   if (bufA.length !== bufB.length) return false;

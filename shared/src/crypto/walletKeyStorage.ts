@@ -73,3 +73,15 @@ export function loadOrCreateEncryptedSecret(
   fs.writeFileSync(filePath, encryptSecretHex(secretHex, passphrase), { mode: 0o600 });
   return secretHex;
 }
+
+/**
+ * Same as `loadOrCreateEncryptedSecret`, but for a whole JSON-serializable value (a keypair,
+ * for instance) instead of a lone hex secret — despite the "Hex" naming above, encryptSecretHex/
+ * decryptSecretHex just encrypt arbitrary UTF-8 string bytes, so JSON.stringify/parse around
+ * them is all that's needed. Proven pattern, generalized from
+ * `modules/incoterms-escrow/src/server/identity.ts`'s `loadOrCreateKeyPairJson`.
+ */
+export function loadOrCreateKeyPairJson<T>(filePath: string, passphrase: string, generate: () => T): T {
+  const json = loadOrCreateEncryptedSecret(filePath, passphrase, () => JSON.stringify(generate()));
+  return JSON.parse(json) as T;
+}

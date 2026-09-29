@@ -16,6 +16,9 @@ import {
   decideReviewItem,
   getReviewItem,
   listReviewItems,
+  encryptSecretHex,
+  decryptSecretHex,
+  timingSafeEqual,
 } from '@ublp/shared';
 import { UBLPVerifiableCredential } from '@ublp/zk-customs-types';
 import { openMinistryDb, upsertDocumentRecord, getDocumentRecord } from './db';
@@ -62,7 +65,7 @@ function requireSession(request: FastifyRequest, reply: FastifyReply, done: (err
 
 function requireApiKey(request: FastifyRequest, reply: FastifyReply, done: (err?: Error) => void): void {
   const provided = request.headers['x-api-key'];
-  if (!BROKER_API_KEY || provided !== BROKER_API_KEY) {
+  if (!BROKER_API_KEY || !timingSafeEqual(String(provided ?? ''), BROKER_API_KEY)) {
     reply.status(401).send({ error: 'Missing or invalid API key.' });
     return;
   }
@@ -70,10 +73,17 @@ function requireApiKey(request: FastifyRequest, reply: FastifyReply, done: (err?
 }
 
 // ─── Key Encryption ───────────────────────────────────────────────────────────
+//
+// Current (v3) format delegates entirely to @ublp/shared's walletKeyStorage (AES-256-GCM,
+// PBKDF2 600k/sha512) via encryptSecretHex/decryptSecretHex over the whole {privateKey,
+// publicKey} JSON blob — the same proven pattern incoterms-escrow's identity.ts already uses
+// for its own keypairs. A hand-rolled v2 scheme predated this (different PBKDF2 params, a
+// different on-disk shape) and is NOT byte-compatible with v3, so loadOrGenerateKeys below
+// still knows how to read (never write) a v2 file, one time, to migrate it forward.
 
 const PASSPHRASE = process.env.MINISTRY_KEY_PASSPHRASE ?? '';
 
-interface EncryptedKeyFile {
+interface EncryptedKeyFileV2 {
   version: '2';
   algorithm: 'EC-P256';
   publicKey: string;
@@ -85,22 +95,10 @@ interface LegacyKeyFile {
   publicKey: string;
 }
 
-async function encryptPrivateKey(pem: string, passphrase: string): Promise<string> {
-  const salt = crypto.randomBytes(16);
-  const derivedKey = await pbkdf2(passphrase, salt, 100_000, 32, 'sha256');
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', derivedKey, iv);
-  const encrypted = Buffer.concat([cipher.update(pem, 'utf8'), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return JSON.stringify({
-    salt: salt.toString('hex'),
-    iv: iv.toString('hex'),
-    tag: tag.toString('hex'),
-    data: encrypted.toString('hex'),
-  });
-}
-
-async function decryptPrivateKey(encryptedJson: string, passphrase: string): Promise<string> {
+/** v2-only, read path kept solely to migrate a pre-existing v2 file forward to v3 — never used
+ * for new writes. Mirrors the v2 format's own since-replaced parameters (100k/sha256) exactly,
+ * which is why this couldn't just be swapped in place for @ublp/shared's walletKeyStorage. */
+async function decryptPrivateKeyV2(encryptedJson: string, passphrase: string): Promise<string> {
   const parsed = JSON.parse(encryptedJson) as { salt: string; iv: string; tag: string; data: string };
   const derivedKey = await pbkdf2(passphrase, Buffer.from(parsed.salt, 'hex'), 100_000, 32, 'sha256');
   const decipher = crypto.createDecipheriv('aes-256-gcm', derivedKey, Buffer.from(parsed.iv, 'hex'));
@@ -113,13 +111,7 @@ async function decryptPrivateKey(encryptedJson: string, passphrase: string): Pro
 async function persistKeys(keys: KeyPair): Promise<void> {
   await fs.promises.mkdir(path.dirname(KEYS_PATH), { recursive: true });
   if (PASSPHRASE) {
-    const fileData: EncryptedKeyFile = {
-      version: '2',
-      algorithm: 'EC-P256',
-      publicKey: keys.publicKey,
-      encryptedPrivateKey: await encryptPrivateKey(keys.privateKey, PASSPHRASE),
-    };
-    await fs.promises.writeFile(KEYS_PATH, JSON.stringify(fileData, null, 2), 'utf-8');
+    await fs.promises.writeFile(KEYS_PATH, encryptSecretHex(JSON.stringify(keys), PASSPHRASE), { mode: 0o600 });
     console.log('[Ministry] ✓ Private key encrypted and saved with AES-256-GCM.');
   } else {
     await fs.promises.writeFile(KEYS_PATH, JSON.stringify(keys, null, 2), 'utf-8');
@@ -132,15 +124,27 @@ async function loadOrGenerateKeys(): Promise<KeyPair> {
     console.warn('[Ministry] ⚠  MINISTRY_KEY_PASSPHRASE is not set — private key unencrypted (dev only).');
   }
   if (fs.existsSync(KEYS_PATH)) {
-    const raw = JSON.parse(await fs.promises.readFile(KEYS_PATH, 'utf-8')) as EncryptedKeyFile | LegacyKeyFile;
+    const rawText = await fs.promises.readFile(KEYS_PATH, 'utf-8');
+    const raw = JSON.parse(rawText) as { ct?: string } | EncryptedKeyFileV2 | LegacyKeyFile;
+
+    if ('ct' in raw) {
+      if (!PASSPHRASE) throw new Error('Encrypted key file found but MINISTRY_KEY_PASSPHRASE is not set.');
+      const keys = JSON.parse(decryptSecretHex(rawText, PASSPHRASE)) as KeyPair;
+      console.log('[Ministry] ✓ Encrypted key decrypted.');
+      return keys;
+    }
+
     if ('version' in raw && raw.version === '2') {
       if (!PASSPHRASE) throw new Error('Encrypted key file found but MINISTRY_KEY_PASSPHRASE is not set.');
-      const privateKey = await decryptPrivateKey(raw.encryptedPrivateKey, PASSPHRASE);
-      console.log('[Ministry] ✓ Encrypted key decrypted.');
-      return { privateKey, publicKey: raw.publicKey };
+      const privateKey = await decryptPrivateKeyV2(raw.encryptedPrivateKey, PASSPHRASE);
+      console.warn('[Ministry] ⚠  Legacy encrypted (v2) key file — migrating to current format...');
+      const keys: KeyPair = { privateKey, publicKey: raw.publicKey };
+      await persistKeys(keys);
+      return keys;
     }
+
     const legacy = raw as LegacyKeyFile;
-    console.warn('[Ministry] ⚠  Legacy format — migrating to new format...');
+    console.warn('[Ministry] ⚠  Legacy plaintext key file — migrating to current format...');
     const keys: KeyPair = { privateKey: legacy.privateKey, publicKey: legacy.publicKey };
     await persistKeys(keys);
     return keys;

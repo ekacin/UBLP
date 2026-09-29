@@ -6,6 +6,7 @@ import {
   encryptSecretHex,
   decryptSecretHex,
   loadOrCreateEncryptedSecret,
+  loadOrCreateKeyPairJson,
 } from '../../../../shared/src/crypto/walletKeyStorage';
 
 const tmpFiles: string[] = [];
@@ -70,5 +71,20 @@ describe('loadOrCreateEncryptedSecret', () => {
     const file = tmpPath('seed-wrong-pw.json');
     loadOrCreateEncryptedSecret(file, 'right-pw', () => 'abcd1234');
     expect(() => loadOrCreateEncryptedSecret(file, 'wrong-pw', () => 'abcd1234')).toThrow();
+  });
+});
+
+describe('loadOrCreateKeyPairJson', () => {
+  it('round-trips a keypair-shaped object, not just a lone secret', () => {
+    const file = tmpPath('keypair.json');
+    const keyPair = { privateKey: '-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----', publicKey: '-----BEGIN PUBLIC KEY-----\nxyz\n-----END PUBLIC KEY-----' };
+
+    const first = loadOrCreateKeyPairJson(file, 'pw', () => keyPair);
+    const second = loadOrCreateKeyPairJson(file, 'pw', () => {
+      throw new Error('should not regenerate — file already exists');
+    });
+
+    expect(first).toEqual(keyPair);
+    expect(second).toEqual(keyPair);
   });
 });
