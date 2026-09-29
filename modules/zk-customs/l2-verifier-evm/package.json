@@ -1,0 +1,26 @@
+{
+  "name": "@ublp/l2-verifier-evm",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "setup": "bash setup.sh",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsx src/server.ts",
+    "smoke": "tsx src/smoke.ts",
+    "compile:contract": "cd contracts && forge build",
+    "test:contract": "cd contracts && forge test",
+    "deploy:contract": "cd contracts && forge script script/Deploy.s.sol --rpc-url $L2_RPC_URL --broadcast --private-key $L2_DEPLOYER_PRIVATE_KEY --sig \"run(address,bytes32)\" $SP1_VERIFIER_ADDRESS $SP1_PROGRAM_VKEY"
+  },
+  "dependencies": {
+    "@ublp/shared": "*",
+    "@ublp/zk-customs-types": "*",
+    "fastify": "^5.8.5",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.23.12",
+    "typescript": "^5.4.5"
+  }
+}

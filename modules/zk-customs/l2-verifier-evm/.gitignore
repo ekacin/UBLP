@@ -1,0 +1,7 @@
+dist
+contracts/out
+contracts/cache
+contracts/lib
+contracts/broadcast
+data
+.env
