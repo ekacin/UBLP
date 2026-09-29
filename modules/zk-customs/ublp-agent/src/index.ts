@@ -26,6 +26,7 @@ const app = createAgentServer();
 const L2_VERIFIER_URL = process.env.L2_VERIFIER_URL ?? 'http://localhost:3003';
 const AGENT_DID = process.env.AGENT_DID ?? 'did:ublp:agent:default';
 const AGENT_KEYS_PATH = path.join(__dirname, '..', 'data', 'agent-keypair.json');
+const AGENT_KEY_PASSPHRASE = process.env.AGENT_KEY_PASSPHRASE ?? '';
 const TRANSACTION_LOG_PATH = path.join(__dirname, '..', 'data', 'transactions.db');
 
 /**
@@ -268,7 +269,7 @@ async function buildServer(agentKeys: KeyPair): Promise<void> {
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 const start = async (): Promise<void> => {
-  const agentKeys = await loadOrGenerateAgentKeys(AGENT_KEYS_PATH, 'UBLP Agent');
+  const agentKeys = await loadOrGenerateAgentKeys(AGENT_KEYS_PATH, 'UBLP Agent', AGENT_KEY_PASSPHRASE);
   await buildServer(agentKeys);
   await startAgentServer(app, { port: 3002, host: '0.0.0.0' });
   console.log('[UBLP Agent] ✓ UBLP Agent — http://localhost:3002');
