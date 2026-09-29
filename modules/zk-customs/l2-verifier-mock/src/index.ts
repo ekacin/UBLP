@@ -1,4 +1,3 @@
-import Fastify from 'fastify';
 import fs from 'fs';
 import path from 'path';
 import { Mutex } from 'async-mutex';
@@ -7,6 +6,8 @@ import {
   combinedSignatureHash,
   sha256Hash,
   sp1VerifyProof,
+  createAgentServer,
+  startAgentServer,
 } from '@ublp/shared';
 import {
   UBLPVerifiablePresentation,
@@ -14,7 +15,7 @@ import {
   L2SettleResponse,
 } from '@ublp/zk-customs-types';
 
-const app = Fastify({ logger: false });
+const app = createAgentServer({ logger: false });
 const DB_PATH = path.join(__dirname, '..', 'data', 'settled.json');
 const REVOKED_PATH = path.join(__dirname, '..', 'data', 'revoked_keys.json');
 const MINISTRY_URL = process.env.MINISTRY_URL ?? 'http://localhost:3001';
@@ -339,7 +340,7 @@ const start = async (): Promise<void> => {
   revokedKeys = await loadRevokedKeys();
   if (revokedKeys.size > 0)
     console.log(`[L2 Verifier] ${revokedKeys.size} revoked key(s) loaded.`);
-  await app.listen({ port: 3003, host: '0.0.0.0' });
+  await startAgentServer(app, { port: 3003 });
   console.log('[L2 Verifier] ✓ L2 Verifier Mock — http://localhost:3003');
   console.log('[L2 Verifier] PROOF_MODE:', PROOF_MODE);
   syncWithRetry();

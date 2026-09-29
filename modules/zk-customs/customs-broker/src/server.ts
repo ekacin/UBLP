@@ -7,11 +7,17 @@
  * proceeds automatically, tracked in `submissions`.
  */
 
-import Fastify, { FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import path from 'path';
-import { SimpleSessionAuthStore, createReviewItem, decideReviewItem } from '@ublp/shared';
+import {
+  SimpleSessionAuthStore,
+  createReviewItem,
+  decideReviewItem,
+  createAgentServer,
+  startAgentServer,
+} from '@ublp/shared';
 import {
   openBrokerDb,
   createSubmission,
@@ -57,7 +63,7 @@ interface MinistryApproveResponse {
 }
 
 export async function buildServer(db: ReturnType<typeof openBrokerDb>) {
-  const app = Fastify({ logger: false });
+  const app = createAgentServer({ logger: false });
   await app.register(cors, { origin: true });
   await app.register(rateLimit, { global: false });
 
@@ -161,7 +167,7 @@ export async function buildServer(db: ReturnType<typeof openBrokerDb>) {
 const start = async (): Promise<void> => {
   const db = openBrokerDb(DB_PATH);
   const app = await buildServer(db);
-  await app.listen({ port: PORT, host: '0.0.0.0' });
+  await startAgentServer(app, { port: PORT });
   console.log(`[Broker] ✓ Customs Broker API — http://localhost:${PORT}`);
 
   const poller = startSubmissionPoller(db, {
