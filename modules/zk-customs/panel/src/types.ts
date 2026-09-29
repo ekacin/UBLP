@@ -1,6 +1,16 @@
-// Hand-copied from the Ministry/Broker backends' own shapes — same convention as
-// incoterms-escrow/panel/src/types.ts: this is a browser bundle, the backends are Node-only,
-// so these aren't imported, just kept in sync by hand.
+// Most of these are hand-copied from the Ministry/Broker backends' own shapes — same
+// convention as incoterms-escrow/panel/src/types.ts: this is a browser bundle, and `ReviewItem`/
+// `Submission` are typed inside Node-only packages (@ublp/shared, customs-broker), so those two
+// stay hand-copied. The VC/VP/proof/settlement shapes, though, already live in the dependency-
+// free @ublp/zk-customs-types package (also used by every backend service) — imported directly
+// below rather than re-duplicated a second time.
+export type {
+  UBLPVerifiableCredential as VerifiableCredential,
+  UBLPVerifiablePresentation as VerifiablePresentation,
+  VPProof,
+  L2SettleRecord,
+} from '@ublp/zk-customs-types';
+import type { UBLPVerifiableCredential, UBLPVerifiablePresentation, L2SettleRecord } from '@ublp/zk-customs-types';
 
 export type ServiceRole = 'ministry' | 'broker';
 
@@ -48,13 +58,6 @@ export interface ReviewItem {
   updatedAt: number;
 }
 
-export interface VerifiableCredential {
-  id: string;
-  issuer: string;
-  issuanceDate: string;
-  credentialSubject: { id: string; documentId: string };
-}
-
 // ---- Broker: customs-broker/src/db.ts's Submission ----
 
 export type SubmissionStatus =
@@ -68,40 +71,14 @@ export type SubmissionStatus =
   | 'rejected'
   | 'failed';
 
-export interface L2SettleRecord {
-  documentHash: string;
-  documentIdHash: string;
-  ministryPublicKeyHash: string;
-  holderDid: string;
-  status: 'APPROVED' | 'REJECTED' | 'SUSPICIOUS';
-  settledAt: string;
-  proofSystem: string;
-}
-
-export interface VPProof {
-  proofSystem: string;
-  proofBytes: string;
-  publicValues: {
-    documentHash: string;
-    pubKeyHash: string;
-    documentIdHash: string;
-    holderPubKeyHash: string;
-  };
-}
-
-export interface VerifiablePresentation {
-  holder: string;
-  proof: VPProof;
-}
-
 export interface Submission {
   id: number;
   reviewItemId: number;
   document: CustomsDocument;
   status: SubmissionStatus;
   ministryRefId: number | null;
-  verifiableCredential: VerifiableCredential | null;
-  presentation: VerifiablePresentation | null;
+  verifiableCredential: UBLPVerifiableCredential | null;
+  presentation: UBLPVerifiablePresentation | null;
   l2Result: { status: 'APPROVED' | 'REJECTED'; record: L2SettleRecord } | null;
   error: string | null;
   createdAt: number;

@@ -10,6 +10,7 @@
     "postinstall": "node scripts/ensure-plugin-react.mjs"
   },
   "dependencies": {
+    "@ublp/zk-customs-types": "*",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
