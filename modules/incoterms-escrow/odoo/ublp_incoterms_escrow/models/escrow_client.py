@@ -74,11 +74,16 @@ class EscrowClient:
 
     def sign_challenge_via_helper(self, repo_path, secrets_dir, role, passphrase, nonce_hex):
         """Shells out to odoo-auth-helper.ts. Raises EscrowApiError on any failure — a failed
-        sign means login cannot proceed, there is no fallback."""
+        sign means login cannot proceed, there is no fallback.
+
+        The passphrase is piped via stdin (`input=`), never argv — a process's command line is
+        visible to any other local user via `ps aux`/`/proc/<pid>/cmdline` for as long as it
+        runs; stdin isn't."""
         try:
             result = subprocess.run(
-                ['npx', 'tsx', 'scripts/odoo-auth-helper.ts', secrets_dir, role, passphrase, nonce_hex],
+                ['npx', 'tsx', 'scripts/odoo-auth-helper.ts', secrets_dir, role, nonce_hex],
                 cwd=repo_path,
+                input=passphrase,
                 capture_output=True,
                 text=True,
                 timeout=REQUEST_TIMEOUT_SECONDS,

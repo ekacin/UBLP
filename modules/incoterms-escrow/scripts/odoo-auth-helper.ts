@@ -16,10 +16,14 @@
  * claim/release) — out of scope for this v0.1 pilot, flagged rather than hidden.
  *
  * Usage (invoked by the Odoo module's escrow_client.py via subprocess, not run by a human):
- *   tsx scripts/odoo-auth-helper.ts <secretsDir> <role> <passphrase> <nonceHex>
+ *   tsx scripts/odoo-auth-helper.ts <secretsDir> <role> <nonceHex>
+ * The passphrase is read from stdin (one line, no trailing processing beyond a trim), NOT an
+ * argv — a process's argv is visible to any other local user via `ps aux` for as long as it
+ * runs; stdin isn't. escrow_client.py passes it via subprocess.run(..., input=passphrase).
  * Prints one line of JSON to stdout: {"signature","signedDataHex","verifyingKey"}
  */
 import path from 'path';
+import { readFileSync } from 'fs';
 import { sampleSigningKey, signData, signatureVerifyingKey, type SigningKey } from '@midnight-ntwrk/ledger-v8';
 import { loadOrCreateEncryptedSecret } from '@ublp/shared';
 
@@ -33,9 +37,14 @@ function loadOrCreateOdooLoginKey(secretsDir: string, role: string, passphrase: 
 }
 
 function main(): void {
-  const [secretsDir, role, passphrase, nonceHex] = process.argv.slice(2);
-  if (!secretsDir || !role || !passphrase || !nonceHex) {
-    console.error('Usage: tsx odoo-auth-helper.ts <secretsDir> <role> <passphrase> <nonceHex>');
+  const [secretsDir, role, nonceHex] = process.argv.slice(2);
+  if (!secretsDir || !role || !nonceHex) {
+    console.error('Usage: tsx odoo-auth-helper.ts <secretsDir> <role> <nonceHex>  (passphrase on stdin)');
+    process.exit(1);
+  }
+  const passphrase = readFileSync(0, 'utf-8').trim();
+  if (!passphrase) {
+    console.error('No passphrase received on stdin.');
     process.exit(1);
   }
 
