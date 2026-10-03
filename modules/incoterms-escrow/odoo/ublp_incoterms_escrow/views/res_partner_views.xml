@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_partner_form_inherit_ublp_escrow" model="ir.ui.view">
+        <field name="name">res.partner.form.inherit.ublp.escrow</field>
+        <field name="model">res.partner</field>
+        <field name="inherit_id" ref="base.view_partner_form"/>
+        <field name="arch" type="xml">
+            <notebook position="inside">
+                <page string="UBLP Incoterms Escrow" name="ublp_incoterms_escrow">
+                    <group>
+                        <field name="ublp_did"/>
+                        <field name="ublp_memo_public_key"/>
+                        <field name="ublp_port_authority_key_hash"/>
+                        <field name="ublp_agent_url"/>
+                    </group>
+                </page>
+            </notebook>
+        </field>
+    </record>
+
+</odoo>

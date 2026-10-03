@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_ublp_escrow_propose_wizard_form" model="ir.ui.view">
+        <field name="name">ublp.escrow.propose.wizard.form</field>
+        <field name="model">ublp.escrow.propose.wizard</field>
+        <field name="arch" type="xml">
+            <form>
+                <group>
+                    <field name="shipment_id"/>
+                    <field name="incoterm"/>
+                    <field name="agreed_amount"/>
+                    <field name="duration_seconds"/>
+                    <field name="timeout_direction"/>
+                </group>
+                <group string="Buyer">
+                    <field name="buyer_partner_id" placeholder="Pick a saved Contact, or fill in by hand below"
+                           options="{'no_create': True, 'no_open': True}"/>
+                    <field name="buyer_did"/>
+                    <field name="buyer_memo_public_key"/>
+                    <field name="buyer_agent_url"/>
+                </group>
+                <group string="Port authority (independent attester)">
+                    <field name="port_authority_partner_id" placeholder="Pick a saved Contact, or fill in by hand below"
+                           options="{'no_create': True, 'no_open': True}"/>
+                    <field name="port_authority_did"/>
+                    <field name="port_authority_key_hash"/>
+                </group>
+                <footer>
+                    <button name="action_submit" type="object" string="Propose" class="btn-primary"/>
+                    <button string="Cancel" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_ublp_escrow_propose_wizard" model="ir.actions.act_window">
+        <field name="name">Propose a Deal</field>
+        <field name="res_model">ublp.escrow.propose.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+
+    <menuitem id="menu_ublp_escrow_propose" name="Propose a Deal" parent="menu_ublp_escrow_root"
+              action="action_ublp_escrow_propose_wizard" sequence="20"/>
+
+</odoo>

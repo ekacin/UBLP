@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_ublp_escrow_lock_wizard_form" model="ir.ui.view">
+        <field name="name">ublp.escrow.lock.wizard.form</field>
+        <field name="model">ublp.escrow.lock.wizard</field>
+        <field name="arch" type="xml">
+            <form>
+                <group>
+                    <field name="contract_address"/>
+                    <field name="signed_offer_json" placeholder='{"terms": {...}, "sellerSignature": "...", "sellerPublicKey": "..."}'/>
+                </group>
+                <footer>
+                    <button name="action_submit" type="object" string="Accept &amp; Lock" class="btn-primary"/>
+                    <button string="Cancel" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_ublp_escrow_lock_wizard" model="ir.actions.act_window">
+        <field name="name">Accept an Offer</field>
+        <field name="res_model">ublp.escrow.lock.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+
+    <menuitem id="menu_ublp_escrow_lock" name="Accept an Offer" parent="menu_ublp_escrow_root"
+              action="action_ublp_escrow_lock_wizard" sequence="30"/>
+
+</odoo>

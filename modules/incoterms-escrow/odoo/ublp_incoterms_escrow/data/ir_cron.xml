@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="ir_cron_ublp_sync_incoming_offers" model="ir.cron">
+        <field name="name">UBLP Incoterms Escrow: sync incoming offers</field>
+        <field name="model_id" ref="model_ublp_escrow_incoming_offer"/>
+        <field name="state">code</field>
+        <field name="code">model.action_sync_incoming()</field>
+        <field name="user_id" ref="base.user_root"/>
+        <field name="interval_number">5</field>
+        <field name="interval_type">minutes</field>
+        <field name="active">True</field>
+    </record>
+
+</odoo>

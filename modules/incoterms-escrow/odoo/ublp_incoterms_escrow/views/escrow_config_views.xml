@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="res_config_settings_view_form" model="ir.ui.view">
+        <field name="name">res.config.settings.view.form.inherit.ublp.escrow</field>
+        <field name="model">res.config.settings</field>
+        <field name="inherit_id" ref="base.res_config_settings_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//form" position="inside">
+                <app data-string="UBLP Incoterms Escrow" string="UBLP Incoterms Escrow"
+                     name="ublp_incoterms_escrow" groups="base.group_system">
+                    <block title="Connection" name="ublp_escrow_connection_setting_container">
+                        <setting id="ublp_agent_base_url_setting" string="Settlement-agent URL"
+                                 help="The base URL of this company's own running settlement-agent">
+                            <field name="ublp_agent_base_url" placeholder="http://localhost:4100"/>
+                        </setting>
+                        <setting id="ublp_role_setting" string="Our role"
+                                 help="Which party this Odoo install represents in the deal">
+                            <field name="ublp_role"/>
+                        </setting>
+                        <setting id="ublp_repo_path_setting" string="UBLP repo path"
+                                 help="Path to the incoterms-escrow module on this machine">
+                            <field name="ublp_repo_path" placeholder="/opt/UBLP/modules/incoterms-escrow"/>
+                        </setting>
+                        <setting id="ublp_secrets_dir_setting" string="Login key storage directory"
+                                 help="Where the Odoo-login signing key is stored, encrypted">
+                            <field name="ublp_secrets_dir" placeholder="/opt/UBLP/.odoo-secrets"/>
+                        </setting>
+                        <setting id="ublp_login_passphrase_setting" string="Login key passphrase"
+                                 help="Encrypts the Odoo-login signing key at rest">
+                            <field name="ublp_login_passphrase" password="True"/>
+                        </setting>
+                        <setting id="ublp_test_connection_setting" string="Test connection">
+                            <button name="ublp_test_connection" type="object" string="Test connection"
+                                    class="btn-secondary"/>
+                        </setting>
+                    </block>
+                </app>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

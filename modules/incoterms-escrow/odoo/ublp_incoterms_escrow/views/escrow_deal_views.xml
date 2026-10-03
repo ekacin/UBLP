@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_ublp_escrow_deal_list" model="ir.ui.view">
+        <field name="name">ublp.escrow.deal.list</field>
+        <field name="model">ublp.escrow.deal</field>
+        <field name="arch" type="xml">
+            <list create="0">
+                <field name="shipment_id"/>
+                <field name="contract_address"/>
+                <field name="incoterm"/>
+                <field name="agreed_amount"/>
+                <field name="status" widget="badge"
+                       decoration-info="status in ('empty','proposed')"
+                       decoration-warning="status == 'locked'"
+                       decoration-success="status == 'released'"/>
+                <field name="pending_action_id" optional="hide"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_ublp_escrow_deal_form" model="ir.ui.view">
+        <field name="name">ublp.escrow.deal.form</field>
+        <field name="model">ublp.escrow.deal</field>
+        <field name="arch" type="xml">
+            <form create="0">
+                <header>
+                    <button name="action_refresh_status" type="object" string="Refresh status"
+                            invisible="not contract_address"/>
+                    <button name="action_approve_pending" type="object" string="Approve"
+                            class="btn-primary" invisible="not pending_action_id"/>
+                    <button name="action_reject_pending" type="object" string="Reject"
+                            invisible="not pending_action_id"/>
+                    <button name="action_attest" type="object" string="Confirm milestone completed"
+                            invisible="status != 'locked' or milestone_confirmed"/>
+                    <button name="action_claim" type="object" string="Collect payment"
+                            class="btn-primary"
+                            invisible="status != 'locked' or not milestone_confirmed"/>
+                    <button name="action_release_timeout" type="object" string="Take my money back"
+                            invisible="status != 'locked' or milestone_confirmed or timeout_direction != 'buyer'"/>
+                    <field name="status" widget="statusbar" statusbar_visible="empty,proposed,locked,released"/>
+                </header>
+                <sheet>
+                    <group>
+                        <group string="Deal">
+                            <field name="shipment_id"/>
+                            <field name="contract_address"/>
+                            <field name="incoterm"/>
+                            <field name="agreed_amount"/>
+                            <field name="duration_seconds"/>
+                            <field name="timeout_direction"/>
+                        </group>
+                        <group string="Parties">
+                            <field name="seller_did"/>
+                            <field name="buyer_did"/>
+                            <field name="port_authority_did"/>
+                            <field name="port_authority_key_hash"/>
+                            <field name="buyer_memo_public_key"/>
+                        </group>
+                    </group>
+                    <group string="On-chain status">
+                        <field name="onchain_state" readonly="1"/>
+                        <field name="milestone_confirmed" readonly="1"/>
+                        <field name="deadline_timestamp" readonly="1"/>
+                        <field name="pending_action_id" readonly="1"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_ublp_escrow_deal" model="ir.actions.act_window">
+        <field name="name">Deals</field>
+        <field name="res_model">ublp.escrow.deal</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <menuitem id="menu_ublp_escrow_root" name="UBLP Incoterms Escrow" sequence="90"/>
+    <menuitem id="menu_ublp_escrow_deal" name="Deals" parent="menu_ublp_escrow_root"
+              action="action_ublp_escrow_deal" sequence="10"/>
+
+</odoo>
