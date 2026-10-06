@@ -1,5 +1,7 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
-access_ublp_escrow_deal_user,ublp.escrow.deal.user,model_ublp_escrow_deal,base.group_user,1,1,0,1
+access_ublp_escrow_deal_user,ublp.escrow.deal.user,model_ublp_escrow_deal,base.group_user,1,1,0,0
+access_ublp_escrow_deal_admin,ublp.escrow.deal.admin,model_ublp_escrow_deal,base.group_system,1,1,0,1
 access_ublp_escrow_propose_wizard_user,ublp.escrow.propose.wizard.user,model_ublp_escrow_propose_wizard,base.group_user,1,1,1,1
 access_ublp_escrow_lock_wizard_user,ublp.escrow.lock.wizard.user,model_ublp_escrow_lock_wizard,base.group_user,1,1,1,1
-access_ublp_escrow_incoming_offer_user,ublp.escrow.incoming.offer.user,model_ublp_escrow_incoming_offer,base.group_user,1,1,0,1
+access_ublp_escrow_incoming_offer_user,ublp.escrow.incoming.offer.user,model_ublp_escrow_incoming_offer,base.group_user,1,1,0,0
+access_ublp_escrow_incoming_offer_admin,ublp.escrow.incoming.offer.admin,model_ublp_escrow_incoming_offer,base.group_system,1,1,0,1
