@@ -27,6 +27,15 @@ else:
 _logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT_SECONDS = 30
+# propose/lock/approve/attest/claim/release-timeout each involve a real ZK proof + an on-chain
+# submission (sometimes a contract *deploy*, for propose) — verified empirically against a real
+# local devnet that this can take well over 30s end to end, even though proving itself is fast
+# (seconds); REQUEST_TIMEOUT_SECONDS alone made a real propose+approve call here time out
+# client-side ~30s in, even though the agent went on to complete and confirm it successfully
+# moments later. A client timeout here is cosmetic (the agent isn't told to cancel anything —
+# see routes.ts's own fire-and-forget handling), but it leaves the caller's local record out of
+# sync with reality, exactly as it did here.
+CHAIN_OPERATION_TIMEOUT_SECONDS = 180
 
 
 class EscrowApiError(Exception):
@@ -49,7 +58,7 @@ class EscrowClient:
             headers['Authorization'] = f'Bearer {self.session_token}'
         return headers
 
-    def _request(self, method, path, json_body=None, expect_codes=(200,)):
+    def _request(self, method, path, json_body=None, expect_codes=(200,), timeout=REQUEST_TIMEOUT_SECONDS):
         """json_body=None means "no request body" (e.g. /auth/challenge) — Content-Type:
         application/json is only sent when there's an actual JSON body, since Fastify's global
         JSON parser rejects that header on a genuinely empty body (FST_ERR_CTP_EMPTY_JSON_BODY)."""
@@ -57,7 +66,7 @@ class EscrowClient:
         try:
             resp = requests.request(
                 method, url, json=json_body, headers=self._headers(json_body is not None),
-                timeout=REQUEST_TIMEOUT_SECONDS,
+                timeout=timeout,
             )
         except requests.RequestException as exc:
             raise EscrowApiError(f'Could not reach settlement-agent at {url}: {exc}') from exc
@@ -154,24 +163,34 @@ class EscrowClient:
         return self._request('GET', path)
 
     def approve_pending(self, pending_id):
-        """Actually submits the queued propose/lockEscrow transaction on-chain."""
-        return self._request('POST', f'/deals/pending/{pending_id}/approve')
+        """Actually submits the queued propose/lockEscrow transaction on-chain — a real ZK
+        proof + chain submission, hence the longer timeout (see CHAIN_OPERATION_TIMEOUT_SECONDS)."""
+        return self._request(
+            'POST', f'/deals/pending/{pending_id}/approve', timeout=CHAIN_OPERATION_TIMEOUT_SECONDS
+        )
 
     def reject_pending(self, pending_id):
         return self._request('POST', f'/deals/pending/{pending_id}/reject')
 
     def attest_deal(self, contract_address):
-        """Immediate, single-call — no approval queue, unlike propose/lock."""
-        return self._request('POST', f'/deals/{contract_address}/attest')
+        """Immediate, single-call — no approval queue, unlike propose/lock. Still a real
+        on-chain submission, hence the longer timeout."""
+        return self._request(
+            'POST', f'/deals/{contract_address}/attest', timeout=CHAIN_OPERATION_TIMEOUT_SECONDS
+        )
 
     def claim_deal(self, contract_address):
-        return self._request('POST', f'/deals/{contract_address}/claim')
+        return self._request(
+            'POST', f'/deals/{contract_address}/claim', timeout=CHAIN_OPERATION_TIMEOUT_SECONDS
+        )
 
     def release_timeout_deal(self, contract_address):
         """Only the buyer-refund direction is implemented agent-side as of this module's
         writing — see actions.ts's own v0.1 scope note. Don't expose a seller-payout button
         in the UI; the call would simply fail if that branch is attempted."""
-        return self._request('POST', f'/deals/{contract_address}/release-timeout')
+        return self._request(
+            'POST', f'/deals/{contract_address}/release-timeout', timeout=CHAIN_OPERATION_TIMEOUT_SECONDS
+        )
 
     def get_status(self, contract_address):
         """Explicitly a convenience passthrough per the agent's own routes.ts comment, not the
