@@ -86,6 +86,25 @@ class EscrowDeal(models.Model):
         help='Set while a propose/lock call is queued awaiting approval on the agent side.',
     )
 
+    # Every action below (approve/attest/claim/release-timeout) makes a REAL on-chain call —
+    # a ZK proof + a chain submission, empirically over a minute, sometimes 2+ (see
+    # CHAIN_OPERATION_TIMEOUT_SECONDS in escrow_client.py). Odoo's own button click gives no
+    # visual feedback once the request is in flight beyond a brief spin that's easy to miss —
+    # found the hard way: a user who saw no feedback for a slow-but-successful Approve clicked
+    # Reject instead, assuming it had failed. Without this flag the Reject click would silently
+    # succeed against an action the agent had *already confirmed on-chain*, permanently losing
+    # the only local record of a real contractAddress — see the matching fix in routes.ts's
+    # /deals/pending/:id/reject (status guard) for the other half of that bug. This flag is
+    # written and `env.cr.commit()`-ed BEFORE the slow call starts specifically so it's visible
+    # immediately (the view swaps the button for a "please wait" banner), not only after the
+    # slow call eventually returns.
+    is_submitting = fields.Boolean(
+        default=False, readonly=True,
+        help='True while a propose/lock approval, attest, claim, or timeout-release call is in '
+             'flight against the settlement-agent. Prevents a second click on the same action '
+             'and on Reject while the first is still running.',
+    )
+
     @api.constrains('agreed_amount')
     def _check_agreed_amount(self):
         for deal in self:
@@ -106,6 +125,29 @@ class EscrowDeal(models.Model):
     @api.model
     def _status_from_onchain(self, onchain_state):
         return _ONCHAIN_STATE_TO_STATUS.get(onchain_state, 'empty')
+
+    def _run_chain_operation(self, call):
+        """Shared wrapper for every button that makes a real on-chain call (approve/attest/
+        claim/release-timeout) — see is_submitting's own docstring for why this exists. `call`
+        is a zero-arg callable doing the actual EscrowApiError-raising work; this only handles
+        the in-progress flag around it. Commits straight away so the flag is visible to anyone
+        re-reading this record (e.g. a page refresh) the instant the click registers, not only
+        once the slow call eventually finishes."""
+        self.ensure_one()
+        if self.is_submitting:
+            raise UserError(
+                'An on-chain operation is already in progress for this deal — please wait for '
+                'it to finish (this can take a minute or two) before trying again.'
+            )
+        self.is_submitting = True
+        self.env.cr.commit()
+        try:
+            call()
+        except Exception:
+            self.is_submitting = False
+            self.env.cr.commit()
+            raise
+        self.is_submitting = False
 
     def action_refresh_status(self):
         """Pulls GET /deals/:contractAddress/status and updates this record. A no-op (with a
@@ -134,12 +176,18 @@ class EscrowDeal(models.Model):
         self.ensure_one()
         if not self.pending_action_id:
             raise UserError('This deal has no pending action to approve.')
-        try:
-            client = get_client(self.env)
-            result = client.approve_pending(self.pending_action_id)
-        except EscrowApiError as exc:
-            raise UserError(str(exc)) from exc
-        contract_address = result.get('contractAddress') or result.get('contract_address')
+
+        result = {}
+
+        def call():
+            try:
+                client = get_client(self.env)
+                result['value'] = client.approve_pending(self.pending_action_id)
+            except EscrowApiError as exc:
+                raise UserError(str(exc)) from exc
+
+        self._run_chain_operation(call)
+        contract_address = result['value'].get('contractAddress') or result['value'].get('contract_address')
         self.write({
             'contract_address': contract_address or self.contract_address,
             'pending_action_id': False,
@@ -151,31 +199,53 @@ class EscrowDeal(models.Model):
         self.ensure_one()
         if not self.pending_action_id:
             raise UserError('This deal has no pending action to reject.')
-        try:
-            client = get_client(self.env)
-            client.reject_pending(self.pending_action_id)
-        except EscrowApiError as exc:
-            raise UserError(str(exc)) from exc
+        if self.is_submitting:
+            # Mirrors routes.ts's own status guard on /deals/pending/:id/reject: once an
+            # approval is in flight it may already be confirmed on-chain by the time this
+            # click lands — rejecting it then would just desync this local record from a deal
+            # that actually went through, with the real contractAddress lost. See
+            # is_submitting's docstring for the real incident this fixes.
+            raise UserError(
+                'An approval is currently in progress for this deal — please wait for it to '
+                'finish (or fail) before rejecting.'
+            )
+
+        def call():
+            try:
+                client = get_client(self.env)
+                client.reject_pending(self.pending_action_id)
+            except EscrowApiError as exc:
+                raise UserError(str(exc)) from exc
+
+        self._run_chain_operation(call)
         self.write({'pending_action_id': False})
 
     def action_attest(self):
         """Port-authority only, in practice — the agent itself will reject this call if our
         role isn't port-authority; no client-side role gate is duplicated here."""
         self.ensure_one()
-        try:
-            client = get_client(self.env)
-            client.attest_deal(self.contract_address)
-        except EscrowApiError as exc:
-            raise UserError(str(exc)) from exc
+
+        def call():
+            try:
+                client = get_client(self.env)
+                client.attest_deal(self.contract_address)
+            except EscrowApiError as exc:
+                raise UserError(str(exc)) from exc
+
+        self._run_chain_operation(call)
         self.action_refresh_status()
 
     def action_claim(self):
         self.ensure_one()
-        try:
-            client = get_client(self.env)
-            client.claim_deal(self.contract_address)
-        except EscrowApiError as exc:
-            raise UserError(str(exc)) from exc
+
+        def call():
+            try:
+                client = get_client(self.env)
+                client.claim_deal(self.contract_address)
+            except EscrowApiError as exc:
+                raise UserError(str(exc)) from exc
+
+        self._run_chain_operation(call)
         self.action_refresh_status()
 
     def action_release_timeout(self):
@@ -183,9 +253,13 @@ class EscrowDeal(models.Model):
         escrow_client.py's release_timeout_deal docstring. The view only shows this button when
         timeout_direction == 'buyer', matching that real limitation."""
         self.ensure_one()
-        try:
-            client = get_client(self.env)
-            client.release_timeout_deal(self.contract_address)
-        except EscrowApiError as exc:
-            raise UserError(str(exc)) from exc
+
+        def call():
+            try:
+                client = get_client(self.env)
+                client.release_timeout_deal(self.contract_address)
+            except EscrowApiError as exc:
+                raise UserError(str(exc)) from exc
+
+        self._run_chain_operation(call)
         self.action_refresh_status()

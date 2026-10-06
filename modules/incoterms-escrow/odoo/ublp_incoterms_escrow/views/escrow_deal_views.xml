@@ -28,18 +28,24 @@
                     <button name="action_refresh_status" type="object" string="Refresh status"
                             invisible="not contract_address"/>
                     <button name="action_approve_pending" type="object" string="Approve"
-                            class="btn-primary" invisible="not pending_action_id"/>
+                            class="btn-primary" invisible="not pending_action_id or is_submitting"/>
                     <button name="action_reject_pending" type="object" string="Reject"
-                            invisible="not pending_action_id"/>
+                            invisible="not pending_action_id or is_submitting"/>
                     <button name="action_attest" type="object" string="Confirm milestone completed"
-                            invisible="status != 'locked' or milestone_confirmed"/>
+                            invisible="status != 'locked' or milestone_confirmed or is_submitting"/>
                     <button name="action_claim" type="object" string="Collect payment"
                             class="btn-primary"
-                            invisible="status != 'locked' or not milestone_confirmed"/>
+                            invisible="status != 'locked' or not milestone_confirmed or is_submitting"/>
                     <button name="action_release_timeout" type="object" string="Take my money back"
-                            invisible="status != 'locked' or milestone_confirmed or timeout_direction != 'buyer'"/>
+                            invisible="status != 'locked' or milestone_confirmed or timeout_direction != 'buyer' or is_submitting"/>
                     <field name="status" widget="statusbar" statusbar_visible="empty,proposed,locked,released"/>
                 </header>
+                <div class="alert alert-info" role="alert" invisible="not is_submitting">
+                    ⏳ Submitting to the settlement-agent — a real ZK proof and on-chain
+                    transaction, this can take a minute or two. Don't close this page or click
+                    again; use <strong>Refresh status</strong> (or just reopen this record) once
+                    it's done.
+                </div>
                 <sheet>
                     <group>
                         <group string="Deal">
