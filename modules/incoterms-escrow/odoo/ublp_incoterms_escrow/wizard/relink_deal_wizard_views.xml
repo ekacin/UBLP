@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_ublp_escrow_relink_wizard_form" model="ir.ui.view">
+        <field name="name">ublp.escrow.relink.wizard.form</field>
+        <field name="model">ublp.escrow.relink.wizard</field>
+        <field name="arch" type="xml">
+            <form>
+                <group>
+                    <field name="deal_id" readonly="1"/>
+                    <field name="contract_address"/>
+                    <field name="clear_pending_action"/>
+                </group>
+                <footer>
+                    <button name="action_submit" type="object" string="Relink" class="btn-primary"/>
+                    <button string="Cancel" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_ublp_escrow_relink_wizard" model="ir.actions.act_window">
+        <field name="name">Relink to on-chain contract</field>
+        <field name="res_model">ublp.escrow.relink.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+        <field name="binding_model_id" ref="model_ublp_escrow_deal"/>
+        <field name="binding_view_types">form</field>
+        <field name="context">{'default_deal_id': active_id}</field>
+        <field name="group_ids" eval="[(4, ref('base.group_system'))]"/>
+    </record>
+
+</odoo>

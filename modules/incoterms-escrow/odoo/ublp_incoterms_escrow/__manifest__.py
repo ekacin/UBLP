@@ -32,6 +32,7 @@ popup isn't used here) reachable from wherever this Odoo server process runs.
         'views/escrow_incoming_offer_views.xml',
         'wizard/propose_deal_wizard_views.xml',
         'wizard/lock_deal_wizard_views.xml',
+        'wizard/relink_deal_wizard_views.xml',
     ],
     'installable': True,
     'application': True,
