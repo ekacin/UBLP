@@ -114,5 +114,9 @@ class ProposeDealWizard(models.TransientModel):
                 'message': 'Proposal queued — approve it from the Deals list to actually '
                             'submit it on-chain.',
                 'type': 'success',
+                # Closes this wizard dialog right after the toast — without it the form stayed
+                # open and "Propose" could be clicked again, queueing a second, fully duplicate
+                # propose for the same terms.
+                'next': {'type': 'ir.actions.act_window_close'},
             },
         }

@@ -67,5 +67,7 @@ class LockDealWizard(models.TransientModel):
                 'message': 'Lock queued — approve it from the Deals list to actually submit '
                             'it on-chain.',
                 'type': 'success',
+                # See propose_deal_wizard.py's matching comment — same double-submit risk.
+                'next': {'type': 'ir.actions.act_window_close'},
             },
         }
