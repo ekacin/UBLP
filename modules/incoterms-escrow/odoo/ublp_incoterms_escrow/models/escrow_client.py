@@ -44,11 +44,24 @@ class EscrowApiError(Exception):
 
 class EscrowClient:
     """Stateless aside from the session token the caller passes in/gets back — this class holds
-    no Odoo ORM state itself, so it's safe to construct fresh per call from escrow_deal.py."""
+    no Odoo ORM state itself, so it's safe to construct fresh per call from escrow_deal.py.
 
-    def __init__(self, base_url, session_token=None):
+    on_unauthorized (optional): a zero-arg callable that performs a fresh login and returns a
+    new session token — see get_client()'s own relogin() closure below. Needed because a cached
+    token's local "not expired yet" status is never proof the agent still honors it: the agent
+    is a separate company's own process, and real deployments restart it often (crashes,
+    redeploys, host reboots) — auth.ts's session store does not survive that, so a perfectly
+    unexpired-by-the-clock token can still be rejected. The same self-healing path also covers
+    an operator switching this Odoo install's configured agent URL/role to a different company's
+    agent mid-session, or any other reason the agent might reject an otherwise-unexpired token
+    (revoked session, host clock skew). Rather than modeling each of those cases separately,
+    this treats any unexpected 401 the same way: don't trust the cache, re-authenticate once,
+    retry the exact same request."""
+
+    def __init__(self, base_url, session_token=None, on_unauthorized=None):
         self.base_url = base_url.rstrip('/')
         self.session_token = session_token
+        self.on_unauthorized = on_unauthorized
 
     def _headers(self, has_body):
         headers = {}
@@ -58,7 +71,8 @@ class EscrowClient:
             headers['Authorization'] = f'Bearer {self.session_token}'
         return headers
 
-    def _request(self, method, path, json_body=None, expect_codes=(200,), timeout=REQUEST_TIMEOUT_SECONDS):
+    def _request(self, method, path, json_body=None, expect_codes=(200,), timeout=REQUEST_TIMEOUT_SECONDS,
+                 _retried=False):
         """json_body=None means "no request body" (e.g. /auth/challenge) — Content-Type:
         application/json is only sent when there's an actual JSON body, since Fastify's global
         JSON parser rejects that header on a genuinely empty body (FST_ERR_CTP_EMPTY_JSON_BODY)."""
@@ -70,6 +84,10 @@ class EscrowClient:
             )
         except requests.RequestException as exc:
             raise EscrowApiError(f'Could not reach settlement-agent at {url}: {exc}') from exc
+
+        if resp.status_code == 401 and 401 not in expect_codes and self.on_unauthorized and not _retried:
+            self.session_token = self.on_unauthorized()
+            return self._request(method, path, json_body, expect_codes, timeout, _retried=True)
 
         if resp.status_code not in expect_codes:
             raise EscrowApiError(f'{method} {path} -> HTTP {resp.status_code}: {resp.text}')
@@ -211,31 +229,40 @@ class EscrowClient:
 
 def get_client(env):
     """Builds a ready-to-use, logged-in EscrowClient from this Odoo instance's config
-    (ir.config_parameter), re-using a cached session token if it's still valid and logging in
+    (ir.config_parameter), re-using a cached session token if it looks unexpired and logging in
     fresh otherwise. This is the one place escrow_deal.py / the wizards should go through,
-    rather than constructing EscrowClient directly and managing the token themselves."""
+    rather than constructing EscrowClient directly and managing the token themselves.
+
+    The returned client can also re-authenticate itself mid-request (see EscrowClient's
+    on_unauthorized) — "looks unexpired by the clock" is only ever a hint to skip an
+    unnecessary login round trip, never treated as proof the agent will actually accept the
+    token. A real settlement-agent is a separate company's own long-running process that can
+    restart (crash, redeploy, host reboot) without warning; its in-memory session store does
+    not survive that, so this cache is never the final word."""
     get_param = env['ir.config_parameter'].sudo().get_param
+    set_param = env['ir.config_parameter'].sudo().set_param
     base_url = get_param('ublp_incoterms_escrow.agent_base_url')
     if not base_url:
         raise EscrowApiError('UBLP settlement-agent URL is not configured (Settings > UBLP Incoterms Escrow).')
 
+    def relogin():
+        repo_path = get_param('ublp_incoterms_escrow.repo_path')
+        secrets_dir = get_param('ublp_incoterms_escrow.secrets_dir')
+        role = get_param('ublp_incoterms_escrow.role')
+        passphrase = get_param('ublp_incoterms_escrow.login_passphrase')
+        if not all([repo_path, secrets_dir, role, passphrase]):
+            raise EscrowApiError('UBLP connection is not fully configured (Settings > UBLP Incoterms Escrow).')
+        # A fresh, token-less client for the login handshake itself — login() must not go
+        # through the on_unauthorized path (nothing to retry yet).
+        result = EscrowClient(base_url).login(repo_path, secrets_dir, role, passphrase)
+        set_param('ublp_incoterms_escrow.session_token', result['sessionToken'])
+        set_param('ublp_incoterms_escrow.session_expires_at', str(result['expiresAt']))
+        return result['sessionToken']
+
     token = get_param('ublp_incoterms_escrow.session_token')
     expires_at = get_param('ublp_incoterms_escrow.session_expires_at')
     now_ms = int(time.time() * 1000)
+    if not (token and expires_at and int(expires_at) > now_ms):
+        token = relogin()
 
-    client = EscrowClient(base_url, session_token=token or None)
-    if token and expires_at and int(expires_at) > now_ms:
-        return client
-
-    repo_path = get_param('ublp_incoterms_escrow.repo_path')
-    secrets_dir = get_param('ublp_incoterms_escrow.secrets_dir')
-    role = get_param('ublp_incoterms_escrow.role')
-    passphrase = get_param('ublp_incoterms_escrow.login_passphrase')
-    if not all([repo_path, secrets_dir, role, passphrase]):
-        raise EscrowApiError('UBLP connection is not fully configured (Settings > UBLP Incoterms Escrow).')
-
-    result = client.login(repo_path, secrets_dir, role, passphrase)
-    set_param = env['ir.config_parameter'].sudo().set_param
-    set_param('ublp_incoterms_escrow.session_token', result['sessionToken'])
-    set_param('ublp_incoterms_escrow.session_expires_at', str(result['expiresAt']))
-    return client
+    return EscrowClient(base_url, session_token=token, on_unauthorized=relogin)
