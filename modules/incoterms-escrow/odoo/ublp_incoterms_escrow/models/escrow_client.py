@@ -13,10 +13,16 @@ trust-model explanation. This client shells out to it.
 """
 import json
 import logging
+import platform
 import subprocess
 import time
 
 import requests
+
+if platform.system() == 'Linux':
+    import resource
+else:
+    resource = None
 
 _logger = logging.getLogger(__name__)
 
@@ -84,7 +90,15 @@ class EscrowClient:
 
         The passphrase is piped via stdin (`input=`), never argv — a process's command line is
         visible to any other local user via `ps aux`/`/proc/<pid>/cmdline` for as long as it
-        runs; stdin isn't."""
+        runs; stdin isn't.
+
+        preexec_fn lifts RLIMIT_AS before exec: Odoo's own process sets a virtual-memory cap on
+        itself at startup (`limit_memory_hard`, server.py's `set_limit_memory_hard()`, ~2.5GB by
+        default) as a worker-safety net — fork+exec'd children inherit that same rlimit, which
+        is nowhere near enough for the Node/WASM runtime odoo-auth-helper.ts needs (V8 reserves
+        several GB of virtual address space for a WASM instance regardless of actual usage).
+        That memory cap is meant for Odoo's own long-running request workers, not a short-lived
+        helper script, so this subprocess explicitly opts out of inheriting it."""
         try:
             result = subprocess.run(
                 ['npx', 'tsx', 'scripts/odoo-auth-helper.ts', secrets_dir, role, nonce_hex],
@@ -94,6 +108,10 @@ class EscrowClient:
                 text=True,
                 timeout=REQUEST_TIMEOUT_SECONDS,
                 check=False,
+                preexec_fn=(
+                    (lambda: resource.setrlimit(resource.RLIMIT_AS, (resource.RLIM_INFINITY, resource.RLIM_INFINITY)))
+                    if resource else None
+                ),
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise EscrowApiError(f'Could not run odoo-auth-helper.ts (is Node.js installed?): {exc}') from exc
