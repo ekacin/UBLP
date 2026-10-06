@@ -195,6 +195,16 @@ export function registerSettlementRoutes(app: FastifyInstance, ctx: AgentContext
     const id = Number(req.params.id);
     const pending = getPendingAction(ctx.db, id);
     if (!pending) return reply.code(404).send({ error: 'not_found' });
+    // Same guard as /approve above, for the same reason: once a submit is in flight (or
+    // already confirmed on-chain), "reject" must not silently relabel it — a real transaction
+    // already happened, and there is nothing left to reject. Without this check, a caller that
+    // mistakes a slow-but-successful approve for a hung one (approve can legitimately take over
+    // a minute — real ZK proving + chain submission) could "reject" an already-confirmed
+    // propose/lockEscrow, permanently orphaning the caller's only record of the real
+    // contractAddress with no error ever surfaced.
+    if (pending.status !== 'awaiting_approval') {
+      return reply.code(409).send({ error: 'not_awaiting_approval', status: pending.status });
+    }
     updatePendingActionStatus(ctx.db, id, 'rejected');
     return { ...pending, status: 'rejected' };
   });
