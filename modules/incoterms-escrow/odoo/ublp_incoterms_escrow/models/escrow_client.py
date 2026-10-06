@@ -35,17 +35,23 @@ class EscrowClient:
         self.base_url = base_url.rstrip('/')
         self.session_token = session_token
 
-    def _headers(self):
-        headers = {'Content-Type': 'application/json'}
+    def _headers(self, has_body):
+        headers = {}
+        if has_body:
+            headers['Content-Type'] = 'application/json'
         if self.session_token:
             headers['Authorization'] = f'Bearer {self.session_token}'
         return headers
 
     def _request(self, method, path, json_body=None, expect_codes=(200,)):
+        """json_body=None means "no request body" (e.g. /auth/challenge) — Content-Type:
+        application/json is only sent when there's an actual JSON body, since Fastify's global
+        JSON parser rejects that header on a genuinely empty body (FST_ERR_CTP_EMPTY_JSON_BODY)."""
         url = f'{self.base_url}{path}'
         try:
             resp = requests.request(
-                method, url, json=json_body, headers=self._headers(), timeout=REQUEST_TIMEOUT_SECONDS
+                method, url, json=json_body, headers=self._headers(json_body is not None),
+                timeout=REQUEST_TIMEOUT_SECONDS,
             )
         except requests.RequestException as exc:
             raise EscrowApiError(f'Could not reach settlement-agent at {url}: {exc}') from exc
