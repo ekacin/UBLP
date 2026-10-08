@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_ublp_escrow_open_wizard_form" model="ir.ui.view">
+        <field name="name">ublp.escrow.open.wizard.form</field>
+        <field name="model">ublp.escrow.open.wizard</field>
+        <field name="arch" type="xml">
+            <form>
+                <group>
+                    <field name="contract_address" placeholder="0200…" readonly="loaded"/>
+                </group>
+                <footer invisible="loaded">
+                    <button name="action_load_status" type="object" string="Open" class="btn-primary"/>
+                    <button string="Cancel" class="btn-secondary" special="cancel"/>
+                </footer>
+
+                <group string="Status" invisible="not loaded">
+                    <field name="status_label" readonly="1"/>
+                    <field name="milestone_confirmed" readonly="1"/>
+                    <field name="deadline_timestamp" readonly="1"/>
+                    <field name="timeout_direction" readonly="1"/>
+                </group>
+                <group string="Your company's own record" invisible="not loaded">
+                    <field name="own_record_summary" readonly="1" nolabel="1"/>
+                </group>
+                <!-- Fetched so the invisible="..." expressions below can evaluate them. -->
+                <field name="role" invisible="1"/>
+                <field name="raw_state" invisible="1"/>
+                <field name="is_expired" invisible="1"/>
+
+                <footer invisible="not loaded">
+                    <button name="action_load_status" type="object" string="Refresh"/>
+                    <button name="action_attest" type="object" string="Confirm milestone completed"
+                            class="btn-primary"
+                            invisible="role != 'port-authority' or raw_state != 2 or milestone_confirmed"
+                            confirm="This submits a real on-chain transaction, usually 1-2 minutes, and the page will look frozen the whole time — that's normal. Continue?"/>
+                    <button name="action_claim" type="object" string="Collect payment"
+                            class="btn-primary"
+                            invisible="role != 'seller' or raw_state != 2 or not milestone_confirmed"
+                            confirm="This submits a real on-chain transaction, usually 1-2 minutes, and the page will look frozen the whole time — that's normal. Continue?"/>
+                    <button name="action_release_timeout" type="object" string="Take my money back"
+                            invisible="role != 'buyer' or raw_state != 2 or milestone_confirmed or not is_expired or timeout_direction != 'buyer'"
+                            confirm="This submits a real on-chain transaction, usually 1-2 minutes, and the page will look frozen the whole time — that's normal. Continue?"/>
+                    <button string="Close" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_ublp_escrow_open_wizard" model="ir.actions.act_window">
+        <field name="name">Open a Deal</field>
+        <field name="res_model">ublp.escrow.open.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+
+    <menuitem id="menu_ublp_escrow_open" name="Open a Deal" parent="menu_ublp_escrow_root"
+              action="action_ublp_escrow_open_wizard" sequence="25"/>
+
+</odoo>
