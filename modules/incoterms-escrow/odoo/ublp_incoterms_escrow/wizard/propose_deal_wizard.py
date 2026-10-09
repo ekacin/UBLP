@@ -69,6 +69,18 @@ class ProposeDealWizard(models.TransientModel):
 
     def action_submit(self):
         self.ensure_one()
+        # propose() is seller-only on the agent side — found the hard way: nothing stopped this
+        # wizard from queueing a propose while Odoo was configured as buyer, and the agent only
+        # rejects it at *approve* time ("propose() is only callable by the seller role"), by
+        # which point the pending action is marked 'failed' with no way back (reject also
+        # requires 'awaiting_approval'). Catching it here, before any agent call, turns a dead,
+        # unrecoverable local row into an immediate, clear message instead.
+        role = self.env['ir.config_parameter'].sudo().get_param('ublp_incoterms_escrow.role')
+        if role != 'seller':
+            raise UserError(
+                f'This Odoo install is configured as "{role}", not seller. Only the seller can '
+                'propose a deal — switch the role in Settings first.'
+            )
         params = {
             'shipmentId': self.shipment_id,
             'buyerDid': self.buyer_did,

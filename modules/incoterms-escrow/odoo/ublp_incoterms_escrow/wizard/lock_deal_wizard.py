@@ -37,6 +37,16 @@ class LockDealWizard(models.TransientModel):
 
     def action_submit(self):
         self.ensure_one()
+        # lockEscrow() is buyer-only on the agent side — same class of mistake as
+        # propose_deal_wizard.py's matching guard: without this, submitting here while Odoo is
+        # configured as seller/port-authority queues a pending action that can only ever fail at
+        # approve time, with no way back. Caught here, before any agent call.
+        role = self.env['ir.config_parameter'].sudo().get_param('ublp_incoterms_escrow.role')
+        if role != 'buyer':
+            raise UserError(
+                f'This Odoo install is configured as "{role}", not buyer. Only the buyer can '
+                'lock a deal — switch the role in Settings first.'
+            )
         proposal = self._parse_proposal()
         try:
             client = get_client(self.env)
