@@ -7,6 +7,9 @@
         <field name="arch" type="xml">
             <list create="0">
                 <field name="shipment_id"/>
+                <field name="created_as_role" widget="badge"
+                       decoration-info="created_as_role == 'seller'"
+                       decoration-warning="created_as_role == 'buyer'"/>
                 <field name="contract_address"/>
                 <field name="incoterm"/>
                 <field name="agreed_amount"/>
@@ -16,6 +19,27 @@
                        decoration-success="status == 'released'"/>
                 <field name="pending_action_id" optional="hide"/>
             </list>
+        </field>
+    </record>
+
+    <record id="view_ublp_escrow_deal_search" model="ir.ui.view">
+        <field name="name">ublp.escrow.deal.search</field>
+        <field name="model">ublp.escrow.deal</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="shipment_id"/>
+                <field name="contract_address"/>
+                <!-- Default groupby on purpose — a company that is sometimes buyer and
+                     sometimes seller otherwise sees both sides' rows for the same shipment_id
+                     interleaved with no way to tell them apart at a glance (found live, during
+                     manual testing — see created_as_role's own docstring). -->
+                <filter string="I was the seller" name="filter_role_seller" domain="[('created_as_role', '=', 'seller')]"/>
+                <filter string="I was the buyer" name="filter_role_buyer" domain="[('created_as_role', '=', 'buyer')]"/>
+                <group name="group_by">
+                    <filter string="My role" name="groupby_role" context="{'group_by': 'created_as_role'}"/>
+                    <filter string="Status" name="groupby_status" context="{'group_by': 'status'}"/>
+                </group>
+            </search>
         </field>
     </record>
 
@@ -101,6 +125,8 @@
         <field name="name">Deals</field>
         <field name="res_model">ublp.escrow.deal</field>
         <field name="view_mode">list,form</field>
+        <!-- Grouped by role by default — see view_ublp_escrow_deal_search's own comment. -->
+        <field name="context">{'search_default_groupby_role': 1}</field>
     </record>
 
     <menuitem id="menu_ublp_escrow_root" name="UBLP Incoterms Escrow" sequence="90"/>

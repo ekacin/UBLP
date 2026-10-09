@@ -50,6 +50,21 @@ class EscrowDeal(models.Model):
     _rec_name = 'shipment_id'
 
     shipment_id = fields.Char(required=True)
+    # Set once, by whichever wizard actually created this row (never inferred from which DID
+    # field happens to be blank — fragile, and about to get more so once dispute/attest flows
+    # add more party-specific data). Found necessary the hard way: a company that is sometimes
+    # buyer and sometimes seller ends up with BOTH sides' rows for the same shipment_id sitting
+    # in one Deals list (propose creates the seller's own row, lock creates a separate buyer's
+    # own row — see propose_deal_wizard.py / lock_deal_wizard.py), with nothing to tell them
+    # apart at a glance or filter/group by. See [[project_ublp_escrow_architectural_gaps]] for
+    # the bigger, still-open question this is a symptom of (one Odoo install, sometimes both
+    # roles) — this field only fixes the list being unreadable, not that deeper design question.
+    created_as_role = fields.Selection(
+        [('seller', 'Seller (I proposed this)'), ('buyer', 'Buyer (I locked this)')],
+        readonly=True,
+        help='Blank on rows created before this field existed — backfilled once from whichever '
+             'DID field was blank at the time, not retroactively guaranteed correct.',
+    )
     contract_address = fields.Char(
         index=True, readonly=True,
         help='Set automatically once action_approve_pending submits the deal on-chain and the '

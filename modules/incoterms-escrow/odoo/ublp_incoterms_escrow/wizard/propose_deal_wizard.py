@@ -106,6 +106,7 @@ class ProposeDealWizard(models.TransientModel):
         # — this wizard's own successful agent call above is the only trusted creation path.
         self.env['ublp.escrow.deal'].sudo().create({
             'shipment_id': self.shipment_id,
+            'created_as_role': 'seller',
             'buyer_did': self.buyer_did,
             'buyer_memo_public_key': self.buyer_memo_public_key,
             'port_authority_did': self.port_authority_did,

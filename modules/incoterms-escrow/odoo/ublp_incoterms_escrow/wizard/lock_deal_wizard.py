@@ -58,6 +58,7 @@ class LockDealWizard(models.TransientModel):
         # sudo(): see propose_deal_wizard.py's matching comment — perm_create=0 on purpose.
         self.env['ublp.escrow.deal'].sudo().create({
             'shipment_id': terms.get('shipmentId', self.contract_address),
+            'created_as_role': 'buyer',
             'contract_address': self.contract_address,
             'seller_did': terms.get('sellerDid'),
             'port_authority_did': terms.get('portAuthorityDid'),
