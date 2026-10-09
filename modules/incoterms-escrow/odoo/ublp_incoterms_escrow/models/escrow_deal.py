@@ -9,6 +9,7 @@ state that doesn't exist on-chain today. `status` is computed from the raw on-ch
 real "disputed" branch later is a logic change here, not a schema migration. Selection fields in
 Odoo tolerate new values being added later without invalidating existing stored rows.
 """
+import json
 import time
 
 from odoo import api, fields, models
@@ -103,6 +104,23 @@ class EscrowDeal(models.Model):
         help='True while a propose/lock approval, attest, claim, or timeout-release call is in '
              'flight against the settlement-agent. Prevents a second click on the same action '
              'and on Reject while the first is still running.',
+    )
+
+    offer_delivered = fields.Boolean(
+        readonly=True,
+        help='True if the approve call auto-delivered the signed offer straight to the '
+             "buyer's own agent (buyer_agent_url was set on the Propose wizard). False means "
+             'the buyer never received it automatically — see signed_proposal_json below.',
+    )
+    signed_proposal_json = fields.Text(
+        readonly=True,
+        help='The seller-signed offer (terms + signature) returned by the one and only '
+             "approve call for this deal's propose action — the agent never persists this "
+             "itself (see actions.ts's proposeDeal), so this is the one chance to capture it. "
+             'If offer_delivered is False, copy this and send it to the buyer out-of-band; '
+             "they paste it into their own Lock Deal wizard. Matches the panel's own "
+             '"Signed offer" card (PendingQueue.tsx) — found missing here the hard way, after '
+             'a propose with no buyer_agent_url left no way to hand the offer over at all.',
     )
 
     configured_role = fields.Char(compute='_compute_configured_role')
@@ -202,9 +220,15 @@ class EscrowDeal(models.Model):
 
         self._run_chain_operation(call)
         contract_address = result['value'].get('contractAddress') or result['value'].get('contract_address')
+        # 'proposal' only comes back for a 'propose' approval (lockEscrow's approve has nothing
+        # equivalent to hand anyone) — see signed_proposal_json's own docstring for why this
+        # must be captured here, right now, or it's gone for good.
+        proposal = result['value'].get('proposal')
         self.write({
             'contract_address': contract_address or self.contract_address,
             'pending_action_id': False,
+            'signed_proposal_json': json.dumps(proposal) if proposal else self.signed_proposal_json,
+            'offer_delivered': result['value'].get('delivered', self.offer_delivered),
         })
         if self.contract_address:
             self.action_refresh_status()

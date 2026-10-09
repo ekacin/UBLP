@@ -81,6 +81,17 @@
                         <field name="deadline_timestamp" readonly="1"/>
                         <field name="pending_action_id" readonly="1"/>
                     </group>
+                    <group string="Signed offer — for the buyer" invisible="not signed_proposal_json">
+                        <field name="offer_delivered" readonly="1"/>
+                        <div class="alert alert-warning" role="alert" invisible="offer_delivered">
+                            Not delivered automatically — the buyer has no way to see this yet.
+                            Copy the JSON below and send it to them out-of-band; they paste it
+                            into their own Lock Deal wizard. This is the only copy — the agent
+                            does not keep it anywhere else.
+                        </div>
+                        <field name="signed_proposal_json" readonly="1" widget="text" nolabel="1"
+                               colspan="2"/>
+                    </group>
                 </sheet>
             </form>
         </field>
