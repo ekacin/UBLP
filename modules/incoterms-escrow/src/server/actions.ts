@@ -450,9 +450,12 @@ export async function claimDeal(ctx: AgentContext, contractAddress: string): Pro
   );
 
   const mtIndex = await resolveMtIndex(ctx, contractAddress, 'deposited');
+  // BigInt(...) applied explicitly — see releaseTimeoutDeal's matching comment below for why
+  // (found there that a loaded coin value can come back as a plain string; cheap, safe either
+  // way here too).
   const privateState: EscrowPrivateState = {
     ...previous,
-    qualifiedCoin: { ...recovered.coin, mt_index: mtIndex },
+    qualifiedCoin: { ...recovered.coin, value: BigInt(recovered.coin.value), mt_index: mtIndex },
     depositSalt: recovered.depositSalt,
   };
 
@@ -473,13 +476,9 @@ export async function claimDeal(ctx: AgentContext, contractAddress: string): Pro
   await ctx.providers.privateStateProvider.set(EscrowPrivateStateId, privateState);
   saveDealPrivateState(ctx.db, contractAddress, privateState);
 
-  // Clone here too — findDeployedContract mutates whatever object it's given as
-  // initialPrivateState in place (see lockDeal's own comment on this), coercing bigint fields
-  // (qualifiedCoin.value here) into decimal strings. Passing the real `privateState` let that
-  // corruption land in the SAME object callTx.claimPayout() reads next, producing a real type
-  // error at the circuit boundary ("expected ... Uint<...> but received { value: '1500000', ...
-  // }") — found live via releaseTimeoutDeal's identical pattern below, failing on every one of
-  // the watcher's retries.
+  // Clone here too, as a defensive habit matching lockDeal's own pattern — passing the real,
+  // about-to-be-used `privateState` object into findDeployedContract when a throwaway clone
+  // would do is needless risk either way.
   const contract = await findDeployedContract(ctx.providers, {
     contractAddress,
     compiledContract: compiledEscrowContract,
@@ -514,9 +513,19 @@ export async function releaseTimeoutDeal(ctx: AgentContext, contractAddress: str
   }
 
   const mtIndex = await resolveMtIndex(ctx, contractAddress, 'deposited');
+  // BigInt(...) applied explicitly here regardless of the current runtime type — found live
+  // that `previous.depositedCoin.value` can come back from loadDealPrivateState as a plain
+  // decimal STRING rather than a bigint (confirmed by direct instrumentation: already a string
+  // *before* either findDeployedContract call below, i.e. not caused by them — the originally
+  // suspected "findDeployedContract mutates its initialPrivateState in place" theory, while
+  // real in principle (see lockDeal's own comment), was NOT what was happening to this value
+  // here; the actual save path (lockDeal, verified by instrumentation on a fresh deal) stores
+  // it as a real bigint). Root cause of how one specific on-disk row ended up holding a string
+  // instead was not pinned down further; BigInt(x) is a no-op on an already-correct bigint and
+  // a safe, cheap normalization either way, so this is the durable fix regardless of cause.
   const privateState: EscrowPrivateState = {
     ...previous,
-    qualifiedCoin: { ...previous.depositedCoin, mt_index: mtIndex },
+    qualifiedCoin: { ...previous.depositedCoin, value: BigInt(previous.depositedCoin!.value), mt_index: mtIndex },
   };
 
   // Same ordering fix as claimDeal above, same reason — see its comment.
@@ -529,11 +538,6 @@ export async function releaseTimeoutDeal(ctx: AgentContext, contractAddress: str
   await ctx.providers.privateStateProvider.set(EscrowPrivateStateId, privateState);
   saveDealPrivateState(ctx.db, contractAddress, privateState);
 
-  // Clone here too — see claimDeal's matching comment above. This was the one actually caught
-  // live: the watcher retried this exact call every tick for minutes, each time failing with
-  // "heldCoinForRelease return value ... expected ... Uint<...> but received { value:
-  // '1500000', ... }" — qualifiedCoin.value silently coerced from bigint to a decimal string by
-  // the mutation this clone avoids.
   const contract = await findDeployedContract(ctx.providers, {
     contractAddress,
     compiledContract: compiledEscrowContract,
