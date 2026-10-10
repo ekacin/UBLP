@@ -473,11 +473,18 @@ export async function claimDeal(ctx: AgentContext, contractAddress: string): Pro
   await ctx.providers.privateStateProvider.set(EscrowPrivateStateId, privateState);
   saveDealPrivateState(ctx.db, contractAddress, privateState);
 
+  // Clone here too — findDeployedContract mutates whatever object it's given as
+  // initialPrivateState in place (see lockDeal's own comment on this), coercing bigint fields
+  // (qualifiedCoin.value here) into decimal strings. Passing the real `privateState` let that
+  // corruption land in the SAME object callTx.claimPayout() reads next, producing a real type
+  // error at the circuit boundary ("expected ... Uint<...> but received { value: '1500000', ...
+  // }") — found live via releaseTimeoutDeal's identical pattern below, failing on every one of
+  // the watcher's retries.
   const contract = await findDeployedContract(ctx.providers, {
     contractAddress,
     compiledContract: compiledEscrowContract,
     privateStateId: EscrowPrivateStateId,
-    initialPrivateState: privateState,
+    initialPrivateState: structuredClone(privateState),
   });
   const result = await contract.callTx.claimPayout();
   logAction(ctx, contractAddress, 'claimPayout', {
@@ -522,11 +529,16 @@ export async function releaseTimeoutDeal(ctx: AgentContext, contractAddress: str
   await ctx.providers.privateStateProvider.set(EscrowPrivateStateId, privateState);
   saveDealPrivateState(ctx.db, contractAddress, privateState);
 
+  // Clone here too — see claimDeal's matching comment above. This was the one actually caught
+  // live: the watcher retried this exact call every tick for minutes, each time failing with
+  // "heldCoinForRelease return value ... expected ... Uint<...> but received { value:
+  // '1500000', ... }" — qualifiedCoin.value silently coerced from bigint to a decimal string by
+  // the mutation this clone avoids.
   const contract = await findDeployedContract(ctx.providers, {
     contractAddress,
     compiledContract: compiledEscrowContract,
     privateStateId: EscrowPrivateStateId,
-    initialPrivateState: privateState,
+    initialPrivateState: structuredClone(privateState),
   });
   const result = await contract.callTx.releaseOnTimeout();
   logAction(ctx, contractAddress, 'releaseOnTimeout', { txId: result.public.txId });
