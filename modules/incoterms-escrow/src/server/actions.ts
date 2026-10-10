@@ -455,6 +455,21 @@ export async function claimDeal(ctx: AgentContext, contractAddress: string): Pro
     qualifiedCoin: { ...recovered.coin, mt_index: mtIndex },
     depositSalt: recovered.depositSalt,
   };
+
+  // findDeployedContract MUST run before privateStateProvider.set() — exactly the ordering
+  // lockDeal's own comment above already warns about ("Contract address not set" otherwise).
+  // claimDeal/releaseTimeoutDeal used to get away with the opposite order because, within one
+  // long-running process, propose()/lockEscrow() had already registered this address on this
+  // same provider earlier in that process's life — until a process *restart* wipes that
+  // in-memory registration while the on-disk deal_private_state (loadDealPrivateState above)
+  // survives fine. Found live: claimDeal failed with exactly that error on the first call
+  // after restarting the agent process, against a deal proposed in a now-dead process.
+  await findDeployedContract(ctx.providers, {
+    contractAddress,
+    compiledContract: compiledEscrowContract,
+    privateStateId: EscrowPrivateStateId,
+    initialPrivateState: structuredClone(previous),
+  });
   await ctx.providers.privateStateProvider.set(EscrowPrivateStateId, privateState);
   saveDealPrivateState(ctx.db, contractAddress, privateState);
 
@@ -496,6 +511,14 @@ export async function releaseTimeoutDeal(ctx: AgentContext, contractAddress: str
     ...previous,
     qualifiedCoin: { ...previous.depositedCoin, mt_index: mtIndex },
   };
+
+  // Same ordering fix as claimDeal above, same reason — see its comment.
+  await findDeployedContract(ctx.providers, {
+    contractAddress,
+    compiledContract: compiledEscrowContract,
+    privateStateId: EscrowPrivateStateId,
+    initialPrivateState: structuredClone(previous),
+  });
   await ctx.providers.privateStateProvider.set(EscrowPrivateStateId, privateState);
   saveDealPrivateState(ctx.db, contractAddress, privateState);
 
