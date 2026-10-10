@@ -18,6 +18,12 @@
                        decoration-warning="status == 'locked'"
                        decoration-success="status == 'released'"/>
                 <field name="pending_action_id" optional="hide"/>
+                <!-- Odoo already stamps every record with create_date/write_date — no new
+                     field needed, just expose the one that matters for a deal: when this
+                     company's own side of it was first created. Hidden by default (optional
+                     column, toggle via the list's own gear menu) to keep the default view
+                     uncluttered, but now available to show and sort/filter by. -->
+                <field name="create_date" string="Created" optional="hide"/>
             </list>
         </field>
     </record>
@@ -29,15 +35,18 @@
             <search>
                 <field name="shipment_id"/>
                 <field name="contract_address"/>
+                <field name="create_date" string="Created"/>
                 <!-- Default groupby on purpose — a company that is sometimes buyer and
                      sometimes seller otherwise sees both sides' rows for the same shipment_id
                      interleaved with no way to tell them apart at a glance (found live, during
                      manual testing — see created_as_role's own docstring). -->
                 <filter string="I was the seller" name="filter_role_seller" domain="[('created_as_role', '=', 'seller')]"/>
                 <filter string="I was the buyer" name="filter_role_buyer" domain="[('created_as_role', '=', 'buyer')]"/>
+                <filter string="Created" name="filter_create_date" date="create_date"/>
                 <group name="group_by">
                     <filter string="My role" name="groupby_role" context="{'group_by': 'created_as_role'}"/>
                     <filter string="Status" name="groupby_status" context="{'group_by': 'status'}"/>
+                    <filter string="Created: Day" name="groupby_create_date" context="{'group_by': 'create_date:day'}"/>
                 </group>
             </search>
         </field>
