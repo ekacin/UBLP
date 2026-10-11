@@ -13,6 +13,14 @@
  * Memo layout: [1 byte scheme][12 byte nonce][ciphertext][16 byte AEAD tag]
  * The scheme byte lets a future memo carry a different (e.g. post-quantum hybrid) scheme
  * without breaking decryption of escrows that are still open under the old one.
+ *
+ * NO FORWARD SECRECY, BY DELIBERATE DECISION — not an oversight. The static-static shared
+ * secret is the same for every memo a given pair ever exchanges, and the ciphertext this
+ * produces is stored permanently on-chain (incoterms-escrow's own use of it). If either
+ * party's long-term private key is ever compromised, every past memo between that pair becomes
+ * retroactively decryptable. Full Signal-style X3DH + Double Ratchet and ephemeral-sender-only
+ * ECDH were both considered and rejected — see incoterms-escrow/README.md's "Security notes"
+ * for the full reasoning. Revisit only if a deployment's threat model actually requires it.
  */
 
 import crypto from 'crypto';

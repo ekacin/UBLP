@@ -387,6 +387,19 @@ data — it rides along with the transaction itself.
   environment variable in a process listing, a CI log, a shell history file), everything it
   protects leaks with it. A real deployment should source it from a secrets manager, not a
   plain environment variable.
+- **The dual-recipient memo has no forward secrecy — a deliberate, accepted tradeoff, not an
+  oversight.** The static-static X25519 shared secret between one buyer/seller pair is reused
+  for every memo they ever exchange, and the ciphertext sits on-chain permanently. If either
+  party's long-term private key is ever compromised at any point in the future, every past
+  memo between that pair becomes retroactively decryptable — there is no rotating session key
+  to limit the blast radius. Two alternatives were considered and rejected for this version:
+  full Signal-style X3DH + Double Ratchet (needs continuously-persisted session state that must
+  never be restored from an old backup, plus a published, replenished one-time-prekey bundle —
+  both a poor fit for this self-hosted, no-central-operator model, see "Every deployment is
+  self-hosted" above) and ephemeral-sender-only ECDH (simpler, no session state, but only a
+  partial fix — it protects the sender's key, not the recipient's, since the recipient's static
+  private key can still decrypt every memo ever sent to it). If your threat model requires
+  forward secrecy, treat this as a known gap to close before relying on it.
 
 ## Current scope
 
