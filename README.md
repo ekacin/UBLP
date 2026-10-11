@@ -15,6 +15,12 @@ Protects customs, freight, and supply chain documents against manipulation using
 | ZK Customs Clearance | [`modules/zk-customs`](./modules/zk-customs) | TBD (SP1 zkVM, L2 settlement currently mocked) | Customs document ZK proof, BLS committee attestation, L2 settlement |
 | Incoterms Escrow | [`modules/incoterms-escrow`](./modules/incoterms-escrow) | Midnight Network | Incoterms-based trade escrow with ZK-shielded fund custody and encrypted agent-to-agent deal delivery |
 
+**Incoterms Escrow — ecosystem contributions:**
+- Listed in [Awesome Midnight dApps](https://github.com/midnightntwrk/midnight-awesome-dapps/pull/192) (Finance & DeFi)
+- [servicedesk#187](https://github.com/midnightntwrk/servicedesk/issues/187) — reported an indexer bug blocking shielded-coin index resolution
+- [servicedesk#213](https://github.com/midnightntwrk/servicedesk/issues/213) — feature request for a privacy-safe coin-index API
+- [MIP-0012 discussion](https://github.com/midnightntwrk/midnight-improvement-proposals/discussions/240) — real-world input on contract custody of native assets
+
 ---
 
 ## Quick Start
