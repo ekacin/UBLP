@@ -13,7 +13,7 @@ Protects customs, freight, and supply chain documents against manipulation using
 | Module | Directory | Chain | Description |
 |--------|-----------|-------|-------------|
 | ZK Customs Clearance | [`modules/zk-customs`](./modules/zk-customs) | TBD (SP1 zkVM, L2 settlement currently mocked) | Customs document ZK proof, BLS committee attestation, L2 settlement |
-| Incoterms Escrow | [`modules/incoterms-escrow`](./modules/incoterms-escrow) | Midnight Network | Incoterms-based trade escrow with ZK-shielded fund custody and encrypted agent-to-agent deal delivery |
+| Incoterms Escrow | [`modules/incoterms-escrow`](./modules/incoterms-escrow) | Midnight Network | Incoterms-based trade escrow with ZK-shielded fund custody, encrypted agent-to-agent deal delivery, and a real Odoo ERP integration |
 
 **Incoterms Escrow — ecosystem contributions:**
 - Listed in [Awesome Midnight dApps](https://github.com/midnightntwrk/midnight-awesome-dapps/pull/192) (Finance & DeFi)
