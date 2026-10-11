@@ -148,6 +148,7 @@ src/
 scripts/
   devnet/               local devnet helpers: deploy, fund wallets, full lifecycle runs
 panel/                 React frontend (Vite)
+odoo/                  Odoo 19 ERP module (ublp_incoterms_escrow) — see Odoo ERP Integration below
 tests/                 unit and integration tests (Vitest)
 ```
 
@@ -296,6 +297,22 @@ A full deal exercises every role in turn:
 3. **Port authority** → "Open deal", paste the contract address, "Confirm loading completed".
 4. **Seller**'s agent claims the payout automatically once the attestation lands — no manual step
    needed; the deal's status moves to "Released".
+
+## Odoo ERP Integration
+
+A real Odoo 19 module ([`odoo/ublp_incoterms_escrow`](./odoo/ublp_incoterms_escrow)) lets a
+company run this escrow straight from its own ERP instead of the standalone panel — one Odoo
+install per role (buyer, seller, or port authority), each pointed at that company's own
+settlement agent over HTTP, the same way the panel is. Propose, lock, attest, claim, and
+release-timeout are all real buttons on a real Odoo record, each triggering the exact same
+on-chain calls described above.
+
+![Odoo's Deals list, grouped by whether this install proposed or locked each deal](docs/screenshots/odoo-deals-list.png)
+
+Install it like any other Odoo addon — copy or symlink `odoo/ublp_incoterms_escrow` into your
+Odoo instance's addons path, then enable it from Apps. Configure the agent URL, this install's
+role, and the login passphrase from Settings before using it; everything else (Propose a Deal,
+Incoming Offers, Open a Deal, Accept an Offer) appears in the top menu once it's installed.
 
 ## Configuration
 
