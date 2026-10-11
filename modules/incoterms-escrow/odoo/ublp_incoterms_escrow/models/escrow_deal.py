@@ -143,10 +143,11 @@ class EscrowDeal(models.Model):
     @api.depends_context('uid')
     def _compute_configured_role(self):
         """Not a property of the deal — every row shows the same value, since one Odoo install
-        is always exactly one role. Exists purely so the view's Attest/Claim/Take-my-money-back
+        is always exactly one role. Exists purely so the view's Attest/Claim/timeout-release
         buttons can hide themselves for a role the agent will reject anyway: attestMilestone is
-        port-authority-only, claimPayout is seller-only, and releaseOnTimeout's buyer-refund
-        path is buyer-only (all three enforced server-side in actions.ts, found after a buyer
+        port-authority-only, claimPayout is seller-only, and each of releaseOnTimeout's two
+        directions is role-specific too (buyer-refund needs the buyer's own role, seller-payout
+        needs the seller's — all enforced server-side in actions.ts, found after a buyer
         reported seeing — and being able to click — the port-authority-only Attest button)."""
         role = self.env['ir.config_parameter'].sudo().get_param('ublp_incoterms_escrow.role')
         for deal in self:
