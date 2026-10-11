@@ -75,6 +75,15 @@
                     <button name="action_release_timeout" type="object" string="Take my money back"
                             invisible="status != 'locked' or milestone_confirmed or timeout_direction != 'buyer' or is_submitting or configured_role != 'buyer'"
                             confirm="This submits a real on-chain transaction, usually 1-2 minutes, and the page will look frozen the whole time — that's normal. Continue?"/>
+                    <!-- Same method, same on-chain circuit (releaseOnTimeout) as the button
+                         above — Escrow.compact itself decides which party gets paid based on
+                         timeout_direction; this is just the seller-payout direction's own
+                         label/visibility, kept as a separate button rather than one shared
+                         label since "Take my money back" doesn't make sense for a seller
+                         being paid out. -->
+                    <button name="action_release_timeout" type="object" string="Claim timeout payout"
+                            invisible="status != 'locked' or milestone_confirmed or timeout_direction != 'seller' or is_submitting or configured_role != 'seller'"
+                            confirm="This submits a real on-chain transaction, usually 1-2 minutes, and the page will look frozen the whole time — that's normal. Continue?"/>
                     <field name="status" widget="statusbar" statusbar_visible="empty,proposed,locked,released"/>
                 </header>
                 <!-- Not shown as a widget — only here so the client fetches is_submitting at

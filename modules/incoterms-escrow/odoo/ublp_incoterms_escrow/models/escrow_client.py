@@ -203,9 +203,8 @@ class EscrowClient:
         )
 
     def release_timeout_deal(self, contract_address):
-        """Only the buyer-refund direction is implemented agent-side as of this module's
-        writing — see actions.ts's own v0.1 scope note. Don't expose a seller-payout button
-        in the UI; the call would simply fail if that branch is attempted."""
+        """Both releaseOnTimeout directions are implemented agent-side — see actions.ts's
+        releaseTimeoutDeal, which dispatches by this agent's own configured role."""
         return self._request(
             'POST', f'/deals/{contract_address}/release-timeout', timeout=CHAIN_OPERATION_TIMEOUT_SECONDS
         )

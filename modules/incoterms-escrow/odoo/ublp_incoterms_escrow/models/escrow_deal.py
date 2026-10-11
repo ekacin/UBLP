@@ -302,9 +302,9 @@ class EscrowDeal(models.Model):
         self.action_refresh_status()
 
     def action_release_timeout(self):
-        """Only the buyer-refund direction is implemented agent-side today — see
-        escrow_client.py's release_timeout_deal docstring. The view only shows this button when
-        timeout_direction == 'buyer', matching that real limitation."""
+        """Both releaseOnTimeout directions are implemented agent-side — the contract itself
+        decides who gets paid from timeout_direction, this just calls the one route. Two
+        separate buttons in the view (different labels/visibility) call this same method."""
         self.ensure_one()
 
         def call():

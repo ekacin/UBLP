@@ -494,19 +494,27 @@ export async function claimDeal(ctx: AgentContext, contractAddress: string): Pro
   return { txId: result.public.txId };
 }
 
-// ---- releaseOnTimeout (buyer path only in this pass — see file header) ----
+// ---- releaseOnTimeout (both directions — see payOutToBuyer/payOutToSeller in Escrow.compact) ----
 
 /**
- * v0.1 scope: only the buyer-refund direction is wired here — the far more common real path
- * (buyer reclaims its own deposit because C never attested) and the one proven end-to-end in
- * timeout-lifecycle.ts. The seller-payout direction (`timeoutDirection: Seller`) needs the
- * exact same buyerMemo-recovery dance `claimDeal` already does above; adding it is a
- * mechanical follow-up, not a new pattern, once a real deal actually exercises that branch.
+ * The contract's own releaseOnTimeout() circuit reads `timeoutDirection` off the ledger and
+ * dispatches to payOutToBuyer/payOutToSeller itself — nothing here needs to re-decide that.
+ * What differs per direction is WHOSE agent can supply the right witnesses: the buyer-refund
+ * branch needs the buyer's own depositedCoin/buyerAddress (known locally since lockEscrow);
+ * the seller-payout branch needs the seller's own sellerAddress (known locally since propose)
+ * plus the deposited coin, which the seller never held directly — recovered from the on-chain
+ * `buyerMemo` the exact same way claimDeal already does above. Originally left unbuilt in v0.1
+ * ("a mechanical follow-up, not a new pattern" — see git history); both the Escrow.compact
+ * circuit and witnesses.ts's payoutSellerAddress/payoutAddressSalt were already complete, only
+ * this orchestration was missing.
  */
 export async function releaseTimeoutDeal(ctx: AgentContext, contractAddress: string): Promise<{ txId: string }> {
-  if (ctx.role !== 'buyer') {
-    throw new Error('This agent only implements the buyer-refund releaseOnTimeout path (see file header).');
-  }
+  if (ctx.role === 'buyer') return releaseTimeoutAsBuyer(ctx, contractAddress);
+  if (ctx.role === 'seller') return releaseTimeoutAsSeller(ctx, contractAddress);
+  throw new Error('releaseOnTimeout() is only callable by the buyer or seller role in this agent.');
+}
+
+async function releaseTimeoutAsBuyer(ctx: AgentContext, contractAddress: string): Promise<{ txId: string }> {
   const previous = loadDealPrivateState(ctx.db, contractAddress);
   if (!previous?.depositedCoin || !previous.depositSalt || !previous.buyerAddress || !previous.buyerAddressSalt) {
     throw new Error('No prior lockEscrow() state found for this deal on this agent — cannot release.');
@@ -546,6 +554,52 @@ export async function releaseTimeoutDeal(ctx: AgentContext, contractAddress: str
   });
   const result = await contract.callTx.releaseOnTimeout();
   logAction(ctx, contractAddress, 'releaseOnTimeout', { txId: result.public.txId });
+  return { txId: result.public.txId };
+}
+
+async function releaseTimeoutAsSeller(ctx: AgentContext, contractAddress: string): Promise<{ txId: string }> {
+  const previous = loadDealPrivateState(ctx.db, contractAddress);
+  if (!previous?.sellerAddress || !previous.sellerAddressSalt || !previous.counterpartyMemoPublicKey) {
+    throw new Error('No prior propose() state found for this deal on this agent — cannot release.');
+  }
+
+  // Same buyerMemo recovery as claimDeal — the seller never held the deposited coin directly,
+  // only the buyer did (at lockEscrow time); it travels on-chain only as this encrypted memo.
+  const currentState = ledger((await ctx.providers.publicDataProvider.queryContractState(contractAddress))!.data);
+  const recovered = recoverBuyerMemo(
+    currentState.buyerMemo,
+    hexToBytes(ctx.identity.memoKeyPair.privateKey),
+    previous.counterpartyMemoPublicKey
+  );
+
+  const mtIndex = await resolveMtIndex(ctx, contractAddress, 'deposited');
+  const privateState: EscrowPrivateState = {
+    ...previous,
+    qualifiedCoin: { ...recovered.coin, value: BigInt(recovered.coin.value), mt_index: mtIndex },
+    depositSalt: recovered.depositSalt,
+  };
+
+  await findDeployedContract(ctx.providers, {
+    contractAddress,
+    compiledContract: compiledEscrowContract,
+    privateStateId: EscrowPrivateStateId,
+    initialPrivateState: structuredClone(previous),
+  });
+  await ctx.providers.privateStateProvider.set(EscrowPrivateStateId, privateState);
+  saveDealPrivateState(ctx.db, contractAddress, privateState);
+
+  const contract = await findDeployedContract(ctx.providers, {
+    contractAddress,
+    compiledContract: compiledEscrowContract,
+    privateStateId: EscrowPrivateStateId,
+    initialPrivateState: structuredClone(privateState),
+  });
+  const result = await contract.callTx.releaseOnTimeout();
+  logAction(ctx, contractAddress, 'releaseOnTimeout', {
+    amount: recovered.coin.value.toString(),
+    currency: 'NIGHT',
+    txId: result.public.txId,
+  });
   return { txId: result.public.txId };
 }
 

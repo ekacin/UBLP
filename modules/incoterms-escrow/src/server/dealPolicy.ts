@@ -20,14 +20,14 @@ export function shouldAutoClaimDeal(role: AgentRole, status: DealStatus): boolea
   return role === 'seller' && status.state === LOCKED_STATE && status.milestoneConfirmed;
 }
 
-/** releaseOnTimeout's buyer-refund branch — the only direction actions.ts's releaseTimeoutDeal
- * currently implements (see its file header). Deliberately checks `timeoutDirection === 'buyer'`
- * so the watcher never repeatedly attempts (and fails) the seller-payout branch, which needs a
- * different witness-recovery path this agent doesn't build yet. */
+/** releaseOnTimeout, either direction — matching role to the ledger's own `timeoutDirection`
+ * so each agent only ever attempts the branch it actually has the witness data for (buyer's
+ * own deposit/address from lockEscrow, seller's own address from propose + the buyerMemo
+ * recovery dance — see actions.ts's releaseTimeoutAsSeller). */
 export function shouldAutoReleaseTimeout(role: AgentRole, status: DealStatus, nowSeconds: number): boolean {
   return (
-    role === 'buyer' &&
-    status.timeoutDirection === 'buyer' &&
+    (role === 'buyer' || role === 'seller') &&
+    status.timeoutDirection === role &&
     status.state === LOCKED_STATE &&
     !status.milestoneConfirmed &&
     nowSeconds >= status.deadlineTimestamp
