@@ -240,6 +240,22 @@ export function registerSettlementRoutes(app: FastifyInstance, ctx: AgentContext
     const id = Number(req.params.id);
     const offer = getIncomingOffer(ctx.db, id);
     if (!offer) return reply.code(404).send({ error: 'not_found' });
+
+    // Found live: dismissing an offer used to leave a same-contract lockEscrow pending action
+    // (already queued some other way — a manual paste into the Lock wizard, say) completely
+    // untouched, an orphan stuck 'awaiting_approval' forever even though the operator believed
+    // Dismiss meant "I'm done with this deal." Clean it up here too — reject it if it's still
+    // safe to (hasn't been approved/submitted yet); refuse the dismiss instead of silently
+    // ignoring it if it's already past that point, mirroring /deals/pending/:id/reject's own
+    // guard for the same reason (a real submission in flight must never be silently dropped).
+    const inFlight = findInFlightAction(ctx.db, offer.contractAddress, 'lockEscrow');
+    if (inFlight) {
+      if (inFlight.status !== 'awaiting_approval') {
+        return reply.code(409).send({ error: 'lock_already_in_progress', pendingActionId: inFlight.id });
+      }
+      updatePendingActionStatus(ctx.db, inFlight.id, 'rejected');
+    }
+
     updateIncomingOfferStatus(ctx.db, id, 'dismissed');
     return { ...offer, status: 'dismissed' as const };
   });
