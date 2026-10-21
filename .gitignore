@@ -7,6 +7,11 @@ dist/
 **/dist/
 *.js.map
 
+# Python bytecode cache (Odoo module) — regenerated automatically, Python-version-specific
+__pycache__/
+**/__pycache__/
+*.pyc
+
 # Private keys & credentials — NEVER commit
 **/ministry/keys/
 **/ministry/data/
