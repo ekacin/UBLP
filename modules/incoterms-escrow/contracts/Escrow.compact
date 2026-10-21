@@ -220,6 +220,11 @@ export circuit claimPayout(): [] {
 
 export circuit releaseOnTimeout(): [] {
   assert(state == EscrowState.Locked, "escrow not locked");
+  // Once C has attested, this is no longer a "C never attested" safety net — claimPayout is
+  // the only correct path from here. Without this check, a party could race claimPayout after
+  // the deadline and redirect funds via releaseOnTimeout even though the milestone was already
+  // confirmed, contradicting this circuit's own documented purpose (see file header).
+  assert(!milestoneConfirmed, "milestone already confirmed — use claimPayout instead");
   assert(blockTimeGte(deadlineTimestamp), "deadline not yet reached");
   if (timeoutDirection == TimeoutDirection.Buyer) {
     payOutToBuyer();

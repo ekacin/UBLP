@@ -180,7 +180,10 @@ async function main(): Promise<void> {
     contractAddress,
     compiledContract: compiledEscrowContract,
     privateStateId: EscrowPrivateStateId,
-    initialPrivateState: realBuyerPrivateState,
+    // Disposable clone — findDeployedContract mutates initialPrivateState in place, coercing
+    // bigint fields to strings (see actions.ts's lockDeal comment). realBuyerPrivateState is
+    // reused below (section [3]'s "lockEscrow() a second time" guard), so it must stay intact.
+    initialPrivateState: structuredClone(realBuyerPrivateState),
   });
   await buyerContract.callTx.lockEscrow(claimedLockTime());
   const stateAfterLock = ledger((await buyerProviders.publicDataProvider.queryContractState(contractAddress))!.data);
@@ -195,7 +198,7 @@ async function main(): Promise<void> {
       contractAddress,
       compiledContract: compiledEscrowContract,
       privateStateId: EscrowPrivateStateId,
-      initialPrivateState: realBuyerPrivateState,
+      initialPrivateState: structuredClone(realBuyerPrivateState),
     });
     await contract.callTx.lockEscrow(claimedLockTime());
   });
@@ -257,7 +260,7 @@ async function main(): Promise<void> {
     contractAddress,
     compiledContract: compiledEscrowContract,
     privateStateId: EscrowPrivateStateId,
-    initialPrivateState: realPortAuthorityState,
+    initialPrivateState: structuredClone(realPortAuthorityState),
   });
   await portAuthorityContract.callTx.attestMilestone();
   const stateAfterAttest = ledger((await portAuthorityProviders.publicDataProvider.queryContractState(contractAddress))!.data);
@@ -269,9 +272,97 @@ async function main(): Promise<void> {
       contractAddress,
       compiledContract: compiledEscrowContract,
       privateStateId: EscrowPrivateStateId,
-      initialPrivateState: realPortAuthorityState,
+      initialPrivateState: structuredClone(realPortAuthorityState),
     });
     await contract.callTx.attestMilestone();
+  });
+
+  console.log('\n[6] Separate deal, short deadline: releaseOnTimeout() after attestation...');
+  // A fresh contract is needed here — the main deal above has a 7-day deadline already locked
+  // in, so it can never actually reach "deadline passed" within this script's runtime. This
+  // proves the new guard (Escrow.compact's releaseOnTimeout now asserts !milestoneConfirmed)
+  // for real: without it, this exact call used to SUCCEED once the deadline passed, even
+  // though C had already attested — see the Discord review that found this.
+  const shortDuration = 20n;
+  const deployed2 = await deployContract(sellerProviders, {
+    compiledContract: compiledEscrowContract,
+    privateStateId: EscrowPrivateStateId,
+    initialPrivateState: emptyEscrowPrivateState,
+  });
+  const contractAddress2 = deployed2.deployTxData.public.contractAddress;
+  console.log(`  Deployed at: ${contractAddress2}`);
+
+  const amountSalt2 = randomBytes32();
+  const sellerAddressSalt2 = randomBytes32();
+  const sellerPrivateState2: EscrowPrivateState = {
+    ...emptyEscrowPrivateState,
+    sellerSecretKey,
+    sellerAddress: zswapRecipient(hexToBytes(seller.midnightWalletProvider.getCoinPublicKey())),
+    sellerAddressSalt: sellerAddressSalt2,
+    ownMemoPrivateKey: hexToBytes(sellerMemoKeyPair.privateKey),
+    counterpartyMemoPublicKey: hexToBytes(buyerMemoKeyPair.publicKey),
+    agreedAmount: AGREED_AMOUNT,
+    agreedAmountSalt: amountSalt2,
+  };
+  await sellerProviders.privateStateProvider.set(EscrowPrivateStateId, sellerPrivateState2);
+  await deployed2.callTx.propose(portAuthKeyHash, shortDuration, TimeoutDirection.Buyer);
+  console.log('  propose() succeeded (20s deadline).');
+
+  await shieldFundsFromGenesis(network, buyer, AGREED_AMOUNT + 10_000n);
+  const depositSalt2 = randomBytes32();
+  const buyerAddressSalt2 = randomBytes32();
+  const buyerAddress2 = zswapRecipient(hexToBytes(buyer.midnightWalletProvider.getCoinPublicKey()));
+  const buyerPrivateState2: EscrowPrivateState = {
+    ...emptyEscrowPrivateState,
+    depositedCoin: realDepositedCoin,
+    depositSalt: depositSalt2,
+    buyerAddress: buyerAddress2,
+    buyerAddressSalt: buyerAddressSalt2,
+    agreedAmount: AGREED_AMOUNT,
+    agreedAmountSalt: amountSalt2,
+    ownMemoPrivateKey: hexToBytes(buyerMemoKeyPair.privateKey),
+    counterpartyMemoPublicKey: hexToBytes(sellerMemoKeyPair.publicKey),
+  };
+  const buyerContract2 = await findDeployedContract(buyerProviders, {
+    contractAddress: contractAddress2,
+    compiledContract: compiledEscrowContract,
+    privateStateId: EscrowPrivateStateId,
+    initialPrivateState: structuredClone(buyerPrivateState2),
+  });
+  await buyerContract2.callTx.lockEscrow(claimedLockTime());
+  console.log('  lockEscrow() succeeded.');
+  const mtIndex2 = await waitForContractCoinMtIndex(network.indexer, contractAddress2);
+
+  const portAuthorityState2: EscrowPrivateState = { ...emptyEscrowPrivateState, portAuthoritySecretKey };
+  const portAuthorityContract2 = await findDeployedContract(portAuthorityProviders, {
+    contractAddress: contractAddress2,
+    compiledContract: compiledEscrowContract,
+    privateStateId: EscrowPrivateStateId,
+    initialPrivateState: structuredClone(portAuthorityState2),
+  });
+  await portAuthorityContract2.callTx.attestMilestone();
+  const stateAfterAttest2 = ledger((await portAuthorityProviders.publicDataProvider.queryContractState(contractAddress2))!.data);
+  console.log(`  attestMilestone() succeeded, milestoneConfirmed: ${stateAfterAttest2.milestoneConfirmed} (expect true)`);
+
+  console.log('  Waiting 30s for the 20s deadline to actually pass...');
+  await new Promise((resolve) => setTimeout(resolve, 30_000));
+
+  await expectRejected('releaseOnTimeout() after C already attested (deadline has also passed)', async () => {
+    const releaseState2: EscrowPrivateState = {
+      ...emptyEscrowPrivateState,
+      qualifiedCoin: { ...realDepositedCoin, mt_index: mtIndex2 },
+      depositSalt: depositSalt2,
+      buyerAddress: buyerAddress2,
+      buyerAddressSalt: buyerAddressSalt2,
+    };
+    await buyerProviders.privateStateProvider.set(EscrowPrivateStateId, releaseState2);
+    const contract = await findDeployedContract(buyerProviders, {
+      contractAddress: contractAddress2,
+      compiledContract: compiledEscrowContract,
+      privateStateId: EscrowPrivateStateId,
+      initialPrivateState: releaseState2,
+    });
+    await contract.callTx.releaseOnTimeout();
   });
 
   await closeAgentWallet(seller);
