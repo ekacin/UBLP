@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { generateKeyPair, generateX25519KeyPair } from '@ublp/shared';
-import type { UBLPDid, ShipmentId } from '@ublp/shared';
+import type { UBLPDid, DidWeb, ShipmentId } from '@ublp/shared';
 import {
   proposeEscrow,
   verifyProposal,
@@ -17,7 +17,7 @@ const buyerMemo = generateX25519KeyPair();
 
 const SELLER_DID: UBLPDid = 'did:ublp:seller:acme-export';
 const BUYER_DID: UBLPDid = 'did:ublp:buyer:acme-import';
-const PORT_AUTHORITY: UBLPDid = 'did:ublp:port-authority:pendik-roro';
+const PORT_AUTHORITY: DidWeb = 'did:web:pendik-roro.example.com';
 
 function baseTerms(): EscrowTerms {
   const shipmentId: ShipmentId = `shp:${crypto.randomUUID()}`;

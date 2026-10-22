@@ -40,3 +40,16 @@ export function parseUBLPDid(did: UBLPDid): { role: string; identifier: string }
   }
   return { role: parts[2], identifier: parts.slice(3).join(':') };
 }
+
+/**
+ * W3C `did:web` method (incoterms-escrow's port-authority identity — see AGENTS.md 5.35):
+ * `did:web:<domain>[%3A<port>][:<path-segment>...]`. Chosen over `did:ublp:...` for this one
+ * role specifically because it's independently, cryptographically resolvable over HTTPS by
+ * anyone (buyer included) — a `did:ublp:...` label is just a string neither party can verify
+ * against anything. See ./didWeb.ts for the actual resolution algorithm.
+ */
+export type DidWeb = `did:web:${string}`;
+
+export function isDidWeb(value: string): value is DidWeb {
+  return value.startsWith('did:web:');
+}

@@ -25,6 +25,7 @@ const SALT_B = new Uint8Array(32).fill(5);
 const AMOUNT_SALT = new Uint8Array(32).fill(10);
 const BUYER_PUBKEY = new Uint8Array(32).fill(11);
 const SALT_C = new Uint8Array(32).fill(12);
+const RESOLVED_PORT_AUTH_HASH = new Uint8Array(32).fill(13);
 
 const buyerMemoKeys = generateX25519KeyPair();
 const sellerMemoKeys = generateX25519KeyPair();
@@ -48,6 +49,7 @@ const filledState: EscrowPrivateState = {
   counterpartyMemoPublicKey: hexToBytes(buyerMemoKeys.publicKey),
   agreedAmount: 1_000_000n,
   agreedAmountSalt: AMOUNT_SALT,
+  resolvedPortAuthorityKeyHash: RESOLVED_PORT_AUTH_HASH,
 };
 
 describe('zswapRecipient / contractRecipient', () => {
@@ -166,6 +168,11 @@ describe('escrowWitnesses — populated privateState', () => {
     expect(recovered.address).toEqual(filledState.buyerAddress);
     expect(recovered.addressSalt).toEqual(SALT_C);
   });
+
+  it('returns resolvedPortAuthorityKeyHash (AGENTS.md 5.35 — did:web double-commitment check)', () => {
+    const [, value] = escrowWitnesses.resolvedPortAuthorityKeyHash(contextWith(filledState));
+    expect(value).toBe(RESOLVED_PORT_AUTH_HASH);
+  });
 });
 
 describe('escrowWitnesses — empty privateState (emptyEscrowPrivateState)', () => {
@@ -190,6 +197,7 @@ describe('escrowWitnesses — empty privateState (emptyEscrowPrivateState)', () 
     'buyerAddressEncryptedMemo',
     'payoutBuyerAddress',
     'payoutBuyerAddressSalt',
+    'resolvedPortAuthorityKeyHash',
   ];
 
   for (const name of cases) {

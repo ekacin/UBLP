@@ -35,7 +35,7 @@ describe('dual-recipient memo — end to end (terms -> propose/lockEscrow witnes
 
     const SELLER_DID: UBLPDid = 'did:ublp:seller:acme-export';
     const BUYER_DID: UBLPDid = 'did:ublp:buyer:acme-import';
-    const PORT_AUTHORITY: UBLPDid = 'did:ublp:port-authority:pendik-roro';
+    const PORT_AUTHORITY = 'did:web:pendik-roro.example.com' as const;
 
     const terms: EscrowTerms = {
       shipmentId: `shp:${crypto.randomUUID()}` as ShipmentId,

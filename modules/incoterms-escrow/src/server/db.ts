@@ -68,6 +68,19 @@ CREATE TABLE IF NOT EXISTS deal_private_state (
   updatedAt INTEGER NOT NULL
 );
 
+-- AGENTS.md 5.35 (Discord finding #2 fix) — Trust-On-First-Use record of port-authority
+-- did:web domains this buyer agent has resolved before, keyed by the domain itself (already
+-- IDNA/punycode-normalized by server/didWeb.ts before it ever reaches here — never a raw,
+-- possibly-homograph Unicode string). Plain table, not an encrypted-secret file like
+-- identity.ts's loadOrCreateEncryptedSecret: a domain name and a public key hash are not
+-- secret data, they're a public attestation C already published itself.
+CREATE TABLE IF NOT EXISTS trusted_ports (
+  domain TEXT PRIMARY KEY,
+  roleKeyHashHex TEXT NOT NULL,
+  firstSeenAt INTEGER NOT NULL,
+  lastSeenAt INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS incoming_offers (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   contractAddress TEXT NOT NULL,
@@ -177,6 +190,37 @@ export function setCachedMtIndex(
      VALUES (?, ?, ?, ?)
      ON CONFLICT (contractAddress, coinDescriptor) DO UPDATE SET mtIndex = excluded.mtIndex, discoveredAt = excluded.discoveredAt`
   ).run(contractAddress, coinDescriptor, mtIndex.toString(), Date.now());
+}
+
+// ---- trusted ports (TOFU whitelist, 5.35) ----
+
+export interface TrustedPort {
+  domain: string;
+  roleKeyHashHex: string;
+  firstSeenAt: number;
+  lastSeenAt: number;
+}
+
+export function getTrustedPort(db: SettlementDb, domain: string): TrustedPort | null {
+  const row = db.prepare(`SELECT * FROM trusted_ports WHERE domain = ?`).get(domain) as TrustedPort | undefined;
+  return row ?? null;
+}
+
+/** First sighting of `domain` -> inserts (TOFU's "trust"); a later sighting with the SAME
+ * hash just refreshes `lastSeenAt`. A later sighting with a DIFFERENT hash is the one case
+ * this function deliberately does NOT handle — see server/didWeb.ts's caller, which must
+ * detect that itself (by calling getTrustedPort first) and decide what to do; silently
+ * overwriting here would defeat the whole point of a TOFU record. */
+export function recordTrustedPort(db: SettlementDb, domain: string, roleKeyHashHex: string): void {
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO trusted_ports (domain, roleKeyHashHex, firstSeenAt, lastSeenAt) VALUES (?, ?, ?, ?)
+     ON CONFLICT (domain) DO UPDATE SET lastSeenAt = excluded.lastSeenAt`
+  ).run(domain, roleKeyHashHex, now, now);
+}
+
+export function listTrustedPorts(db: SettlementDb): TrustedPort[] {
+  return db.prepare(`SELECT * FROM trusted_ports ORDER BY firstSeenAt DESC`).all() as TrustedPort[];
 }
 
 // ---- per-deal private state (EscrowPrivateState survives across separate HTTP calls —

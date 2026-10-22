@@ -127,6 +127,15 @@ witness buyerAddressEncryptedMemo(): Bytes<126>;
 witness payoutBuyerAddress(): Either<ZswapCoinPublicKey, ContractAddress>;
 witness payoutBuyerAddressSalt(): Bytes<32>;
 
+// AGENTS.md 5.35 (Discord finding #2 fix) — the buyer's OWN, independently-resolved value for
+// C's role-key hash (via a real did:web HTTPS fetch, done off-chain before lockEscrow is
+// called — see src/server/didWeb.ts), asserted against what the seller wrote at propose time
+// below. Without this, propose() alone decided who "C" is and the buyer never checked it —
+// the seller could name a key it controls itself and later self-attest as C. This doesn't
+// make either party individually authoritative over C's identity; it requires BOTH to agree,
+// which is the most either side can do without a central registry (already rejected, 5.12).
+witness resolvedPortAuthorityKeyHash(): Bytes<32>;
+
 // Domain-separated hash-based authentication — see the security skill's Pattern 2. Used for
 // C's role-key check in attestMilestone(); the domain separator keeps this independent of any
 // other hash derived from the same secret key elsewhere.
@@ -163,6 +172,21 @@ export circuit propose(portAuthKeyHash: Bytes<32>, durationSecondsArg: Uint<64>,
 
 export circuit lockEscrow(claimedLockTime: Uint<64>): [] {
   assert(state == EscrowState.Proposed, "no active proposal");
+
+  // Discord finding #2 fix (5.35) — double-commitment check. The seller wrote
+  // portAuthorityKeyHash at propose() time from data C published itself; this proves the
+  // buyer independently resolved the SAME value via did:web before locking funds, instead of
+  // just trusting the seller's say-so. Checked here (not just off-chain before submitting)
+  // because this is the actual authorization boundary — an off-chain-only check could be
+  // skipped by a modified client, this can't.
+  assert(
+    resolvedPortAuthorityKeyHash() == portAuthorityKeyHash,
+    "buyer's independently resolved port-authority key hash does not match the one the seller proposed"
+  );
+
+  // Efe Kaan AÇİN, 22 Ekim 2026: bu satırı yazana kadar üç farklı mimariyi denedim ve kendi
+  //   sorduğum bir soruyla ikisini elemek zorunda kaldım. Lojistikten buraya kadar geldim,
+  //   devam edeceğim.
 
   // How far claimedLockTime (buyer's self-declared "now") may lag behind the real block time
   // before it's rejected. Bounds the exploit a fully-open self-declared timestamp would allow

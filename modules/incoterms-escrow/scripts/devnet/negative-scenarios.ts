@@ -132,6 +132,9 @@ async function main(): Promise<void> {
     buyerAddressSalt,
     ownMemoPrivateKey: hexToBytes(buyerMemoKeyPair.privateKey),
     counterpartyMemoPublicKey: hexToBytes(sellerMemoKeyPair.publicKey),
+    // AGENTS.md 5.35 — no real did:web document to resolve here (direct circuit calls), so
+    // just reuse the value propose() was given, same as full-lifecycle.ts/timeout-lifecycle.ts.
+    resolvedPortAuthorityKeyHash: portAuthKeyHash,
   };
 
   await expectRejected('lockEscrow() with a coin value that does not match the agreed amount', async () => {
@@ -319,6 +322,7 @@ async function main(): Promise<void> {
     agreedAmountSalt: amountSalt2,
     ownMemoPrivateKey: hexToBytes(buyerMemoKeyPair.privateKey),
     counterpartyMemoPublicKey: hexToBytes(sellerMemoKeyPair.publicKey),
+    resolvedPortAuthorityKeyHash: portAuthKeyHash,
   };
   const buyerContract2 = await findDeployedContract(buyerProviders, {
     contractAddress: contractAddress2,

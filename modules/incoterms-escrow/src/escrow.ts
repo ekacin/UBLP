@@ -7,7 +7,7 @@
  */
 
 import { sha256Hash, signDocument, verifySignature } from '@ublp/shared';
-import type { ShipmentId, UBLPDid } from '@ublp/shared';
+import type { ShipmentId, UBLPDid, DidWeb } from '@ublp/shared';
 
 /**
  * All 11 Incoterms 2020 rules. Every rule shares the same on-chain mechanism — one attested
@@ -22,15 +22,23 @@ export interface EscrowTerms {
   shipmentId: ShipmentId;
   sellerDid: UBLPDid;
   buyerDid: UBLPDid;
-  /** "C" — Section 5.12, the shipment-specific loading-confirmation authority. */
-  portAuthorityDid: UBLPDid;
+  /**
+   * "C" — Section 5.12, the shipment-specific loading-confirmation authority. `did:web:...`
+   * (AGENTS.md 5.35 — Discord finding #2 fix), not `did:ublp:...`: the buyer independently
+   * resolves this exact value over HTTPS before lockEscrow and the circuit asserts both
+   * parties agree, which only works because `did:web` is actually, cryptographically
+   * resolvable — a `did:ublp:...` label never was.
+   */
+  portAuthorityDid: DidWeb;
   /**
    * The actual on-chain-checkable value (Escrow.compact's `roleKeyHash(portAuthoritySecretKey,
-   * ...)`) — `portAuthorityDid` alone is a human-readable label, not something the circuit can
-   * check. C's own agent computes and publishes this (GET /identity/port-authority-key-hash);
-   * whoever is collecting terms (the seller) must already have it before building `terms`, the
-   * same as the two memo public keys below — no signature needed for this one either, since
-   * it's already a one-way public commitment C made themselves.
+   * ...)`) — `portAuthorityDid` alone is a human-readable label. C's own agent computes and
+   * publishes this (GET /identity/port-authority-key-hash, and now also at its own did:web
+   * document — see server/didWeb.ts); whoever is collecting terms (the seller) must already
+   * have it before building `terms`, the same as the two memo public keys below — no
+   * signature needed for this one either, since it's already a one-way public commitment C
+   * made themselves. The buyer no longer just trusts this field: lockDeal re-derives it
+   * independently via did:web before calling lockEscrow (5.35).
    */
   portAuthorityKeyHashHex: string;
   /** Section 5.16 — insurance-responsible party; may be left unset for rules that don't require it (FOB). */

@@ -3,6 +3,7 @@ export * from './crypto/sp1Client';
 export * from './crypto/dualRecipientMemo';
 export * from './crypto/walletKeyStorage';
 export * from './identity/did';
+export * from './identity/didWeb';
 export * from './attestation/types';
 export * from './attestation/policy';
 export * from './attestation/verify';

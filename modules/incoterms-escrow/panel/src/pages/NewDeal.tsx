@@ -148,7 +148,7 @@ const ProposeForm: React.FC<{ onCreated: () => void }> = ({ onCreated }) => {
           Port authority (C) DID
           <input
             required
-            placeholder="did:ublp:port-authority:..."
+            placeholder="did:web:their-domain.com"
             value={form.portAuthorityDid}
             onChange={(e) => set('portAuthorityDid', e.target.value)}
           />

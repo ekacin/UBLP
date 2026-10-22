@@ -11,6 +11,9 @@ import {
   listPendingActions,
   getCachedMtIndex,
   setCachedMtIndex,
+  getTrustedPort,
+  recordTrustedPort,
+  listTrustedPorts,
   saveDealPrivateState,
   loadDealPrivateState,
   listDealRefs,
@@ -92,6 +95,36 @@ describe('mt_index_cache', () => {
     setCachedMtIndex(db, '0xcontract', 'refund', 82n);
     expect(getCachedMtIndex(db, '0xcontract', 'deposited')).toBe(46n);
     expect(getCachedMtIndex(db, '0xcontract', 'refund')).toBe(82n);
+  });
+});
+
+describe('trusted_ports (TOFU whitelist, AGENTS.md 5.35)', () => {
+  it('returns null for a domain never seen before', () => {
+    expect(getTrustedPort(db, 'liman.example.com')).toBeNull();
+  });
+
+  it('records the first sighting of a domain (TOFU "trust")', () => {
+    recordTrustedPort(db, 'liman.example.com', 'aa'.repeat(32));
+    const row = getTrustedPort(db, 'liman.example.com')!;
+    expect(row.roleKeyHashHex).toBe('aa'.repeat(32));
+    expect(row.firstSeenAt).toBe(row.lastSeenAt);
+  });
+
+  it('re-recording the SAME hash for an already-trusted domain only refreshes lastSeenAt, not the hash', () => {
+    recordTrustedPort(db, 'liman.example.com', 'aa'.repeat(32));
+    const first = getTrustedPort(db, 'liman.example.com')!;
+    recordTrustedPort(db, 'liman.example.com', 'aa'.repeat(32));
+    const second = getTrustedPort(db, 'liman.example.com')!;
+    expect(second.roleKeyHashHex).toBe('aa'.repeat(32));
+    expect(second.firstSeenAt).toBe(first.firstSeenAt);
+  });
+
+  it('keeps different domains independent', () => {
+    recordTrustedPort(db, 'liman-a.example.com', 'aa'.repeat(32));
+    recordTrustedPort(db, 'liman-b.example.com', 'bb'.repeat(32));
+    expect(getTrustedPort(db, 'liman-a.example.com')?.roleKeyHashHex).toBe('aa'.repeat(32));
+    expect(getTrustedPort(db, 'liman-b.example.com')?.roleKeyHashHex).toBe('bb'.repeat(32));
+    expect(listTrustedPorts(db)).toHaveLength(2);
   });
 });
 

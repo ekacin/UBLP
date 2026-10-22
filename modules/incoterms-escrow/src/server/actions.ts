@@ -28,6 +28,7 @@ import {
   logTransaction,
   queryTransactions,
   isUBLPDid,
+  isDidWeb,
   encryptDualRecipientMemo,
   decryptDualRecipientMemo,
   type TransactionLogDb,
@@ -44,6 +45,7 @@ import {
 import { recoverBuyerMemo } from '../contract/memo.js';
 import { roleKeyHash } from '../contract/roleKeyHash.js';
 import { findContractCoinMtIndex, waitForContractCoinMtIndex } from '../contract/mtIndex.js';
+import { resolvePortAuthorityKeyHash } from './portAuthority.js';
 import type { AgentWallet, AgentRole } from '../deploy/wallet.js';
 import { buildEscrowProviders } from '../deploy/providers.js';
 import type { NetworkConfig } from '../deploy/networks.js';
@@ -155,8 +157,13 @@ export interface ProposeDealResult {
 
 export async function proposeDeal(ctx: AgentContext, params: ProposeDealParams): Promise<ProposeDealResult> {
   if (ctx.role !== 'seller') throw new Error('propose() is only callable by the seller role.');
-  if (!isUBLPDid(params.buyerDid) || !isUBLPDid(params.portAuthorityDid)) {
-    throw new Error('buyerDid/portAuthorityDid must be valid did:ublp:... identifiers.');
+  if (!isUBLPDid(params.buyerDid)) {
+    throw new Error('buyerDid must be a valid did:ublp:... identifier.');
+  }
+  // AGENTS.md 5.35 — did:web, not did:ublp, since the buyer must independently resolve this
+  // one over real HTTPS before lockEscrow; a did:ublp label was never resolvable at all.
+  if (!isDidWeb(params.portAuthorityDid)) {
+    throw new Error('portAuthorityDid must be a valid did:web:... identifier.');
   }
 
   const deployed = await deployContract(ctx.providers, {
@@ -329,6 +336,20 @@ export async function lockDeal(ctx: AgentContext, params: LockDealParams): Promi
   acceptEscrow(params.proposal, ctx.did);
   const terms = params.proposal.terms;
 
+  // AGENTS.md 5.35 (Discord finding #2 fix) — independently resolve C's role-key hash via
+  // did:web instead of just trusting terms.portAuthorityKeyHashHex because the seller wrote
+  // it. This re-checks what the circuit's own `resolvedPortAuthorityKeyHash() ==
+  // portAuthorityKeyHash` assert will enforce on-chain anyway — doing it here first gives a
+  // clear, immediate error instead of spending a real proof + fee on a doomed-to-fail tx.
+  const resolved = await resolvePortAuthorityKeyHash(ctx.db, terms.portAuthorityDid);
+  if (resolved.roleKeyHashHex !== terms.portAuthorityKeyHashHex.toLowerCase()) {
+    throw new Error(
+      `Port-authority identity mismatch: ${terms.portAuthorityDid} currently publishes role-key hash ` +
+        `${resolved.roleKeyHashHex}, but the seller's proposed terms claim ${terms.portAuthorityKeyHashHex}. ` +
+        `Refusing to lock — this is exactly the self-attestation fraud this check exists to catch.`
+    );
+  }
+
   const amount = BigInt(terms.amount);
   const depositSalt = randomBytes32();
   const buyerAddressSalt = randomBytes32();
@@ -351,6 +372,7 @@ export async function lockDeal(ctx: AgentContext, params: LockDealParams): Promi
     counterpartyMemoPublicKey: hexToBytes(terms.sellerMemoPublicKey),
     agreedAmount: amount,
     agreedAmountSalt: hexToBytes(terms.amountSalt),
+    resolvedPortAuthorityKeyHash: hexToBytes(resolved.roleKeyHashHex),
   };
 
   // Two real, opposing constraints found via live E2E runs (2026-08-21), both against this

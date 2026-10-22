@@ -23,6 +23,7 @@ import {
   listIncomingOffers,
   getIncomingOffer,
   updateIncomingOfferStatus,
+  listTrustedPorts,
 } from './db.js';
 import {
   type AgentContext,
@@ -63,7 +64,14 @@ export function registerSettlementRoutes(app: FastifyInstance, ctx: AgentContext
   // everything else.
   // Both of the following are public by GET/path — "no session on this agent" is exactly the
   // caller they're for, a genuine counterparty during negotiation.
-  const PUBLIC_GET_PATHS = ['/identity/port-authority-key-hash', '/identity/memo-public-key'];
+  // '/.well-known/did.json' added for AGENTS.md 5.35 — this agent's own did:web document,
+  // fetched by a BUYER'S agent (a genuine counterparty, same "no session here" reasoning as
+  // the other two) to independently resolve this agent's role-key hash before lockEscrow.
+  const PUBLIC_GET_PATHS = [
+    '/identity/port-authority-key-hash',
+    '/identity/memo-public-key',
+    '/.well-known/did.json',
+  ];
   // POST /deals/incoming is public for the same reason (a different company's agent, agent-
   // to-agent delivery below) — but unlike the two GETs, it's a write path that does real
   // verification work and persists attacker-controlled data if abused, so it's rate-limited
@@ -101,6 +109,19 @@ export function registerSettlementRoutes(app: FastifyInstance, ctx: AgentContext
     // typing the DID by hand (must match this agent's real ctx.did, or the counterparty's
     // later accept/lock check rejects it) is exactly the kind of transcription error this
     // endpoint already exists to avoid for the hash itself.
+    return { portAuthorityKeyHashHex: computePortAuthorityKeyHash(ctx.identity.roleSecretKeyHex), did: ctx.did };
+  });
+
+  // ---- AGENTS.md 5.35 — this agent's own did:web document, at the no-path-segment location
+  // (.well-known/did.json) every did:web:<host> DID in this project resolves to (see
+  // deploy/escrow.ts's portAuthorityDid doc comment — we never use path-segment DIDs here).
+  // Same content as the GET above by design: a port authority publishes ONE role-key hash,
+  // reachable both the old way (a human fetches it during negotiation) and the new way (a
+  // buyer's agent cryptographically resolves it via did:web before lockEscrow). ----
+  app.get('/.well-known/did.json', async (_req, reply) => {
+    if (ctx.role !== 'port-authority' || !ctx.identity.roleSecretKeyHex) {
+      return reply.code(404).send({ error: 'this agent publishes no did:web document' });
+    }
     return { portAuthorityKeyHashHex: computePortAuthorityKeyHash(ctx.identity.roleSecretKeyHex), did: ctx.did };
   });
 
@@ -212,6 +233,12 @@ export function registerSettlementRoutes(app: FastifyInstance, ctx: AgentContext
   app.get<{ Querystring: { dealRef?: string } }>('/deals/pending', async (req) => {
     return listPendingActions(ctx.db, req.query.dealRef);
   });
+
+  // ---- AGENTS.md 5.35 — this buyer agent's own TOFU whitelist, session-gated (unlike the
+  // did:web document above, there's no "genuine counterparty" reason for anyone else to see
+  // it) — purely so the panel can show the operator which port-authority domains it has
+  // already trusted. ----
+  app.get('/trusted-ports', async () => listTrustedPorts(ctx.db));
 
   // ---- agent-to-agent incoming offers (buyer side) — encrypted, unauthenticated by
   // necessity (see PUBLIC_POST_PATHS above), rate-limited via config.rateLimit (index.ts

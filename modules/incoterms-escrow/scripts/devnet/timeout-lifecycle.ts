@@ -115,6 +115,9 @@ async function main(): Promise<void> {
     counterpartyMemoPublicKey: hexToBytes(sellerMemoKeyPair.publicKey),
     agreedAmount: AGREED_AMOUNT,
     agreedAmountSalt: amountSalt,
+    // AGENTS.md 5.35 — no real did:web document to resolve here (direct circuit call), so
+    // just reuse the value propose() was given, same as full-lifecycle.ts.
+    resolvedPortAuthorityKeyHash: portAuthKeyHash,
   };
   const buyerProviders = buildEscrowProviders(buyer.midnightWalletProvider, network, buyer.role);
   const buyerContract = await findDeployedContract(buyerProviders, {

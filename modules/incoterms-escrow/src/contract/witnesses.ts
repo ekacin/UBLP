@@ -86,6 +86,15 @@ export interface EscrowPrivateState {
    */
   agreedAmount: bigint | null;
   agreedAmountSalt: Uint8Array | null;
+
+  /**
+   * AGENTS.md 5.35 (Discord finding #2 fix) — the buyer's own, independently did:web-resolved
+   * value for C's role-key hash, populated by server/didWeb.ts BEFORE lockEscrow is called
+   * (witnesses are synchronous reads of already-known private state, same as every other
+   * field here — the actual HTTPS fetch cannot happen inside the witness itself). Only ever
+   * populated on the buyer's agent.
+   */
+  resolvedPortAuthorityKeyHash: Uint8Array | null;
 }
 
 export const emptyEscrowPrivateState: EscrowPrivateState = {
@@ -101,6 +110,7 @@ export const emptyEscrowPrivateState: EscrowPrivateState = {
   counterpartyMemoPublicKey: null,
   agreedAmount: null,
   agreedAmountSalt: null,
+  resolvedPortAuthorityKeyHash: null,
 };
 
 function required<T>(value: T | null, fieldName: string): T {
@@ -277,6 +287,15 @@ export const escrowWitnesses: Witnesses<EscrowPrivateState> = {
     return [
       context.privateState,
       required(context.privateState.buyerAddressSalt, 'buyerAddressSalt'),
+    ];
+  },
+
+  resolvedPortAuthorityKeyHash(
+    context: WitnessContext<Ledger, EscrowPrivateState>
+  ): [EscrowPrivateState, Uint8Array] {
+    return [
+      context.privateState,
+      required(context.privateState.resolvedPortAuthorityKeyHash, 'resolvedPortAuthorityKeyHash'),
     ];
   },
 };

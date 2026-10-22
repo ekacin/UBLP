@@ -168,7 +168,10 @@ async function main(): Promise<void> {
     const proposePending = await api(seller, 'POST', '/deals/propose', {
       shipmentId: `e2e-${Date.now()}`,
       buyerDid: 'did:ublp:buyer:e2e-acme-import',
-      portAuthorityDid: 'did:ublp:port-authority:e2e-pendik-roro',
+      // AGENTS.md 5.35 — must be the port-authority agent's own real, resolvable HTTP
+      // location (buyer's lockDeal fetches `.well-known/did.json` from here — see
+      // server/didWeb.ts's localhost/http exception), not the did:ublp company label.
+      portAuthorityDid: 'did:web:127.0.0.1%3A4102',
       portAuthorityKeyHashHex,
       incoterm: 'FOB',
       // Real ZK proof generation for propose/lock/attest each took 30-45s in earlier runs —

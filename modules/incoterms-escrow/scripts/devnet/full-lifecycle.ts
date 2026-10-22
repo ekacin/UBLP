@@ -125,6 +125,11 @@ async function main(): Promise<void> {
     counterpartyMemoPublicKey: hexToBytes(sellerMemoKeyPair.publicKey),
     agreedAmount: AGREED_AMOUNT,
     agreedAmountSalt: amountSalt,
+    // AGENTS.md 5.35 — real agents resolve this via did:web (server/portAuthority.ts); this
+    // script calls the circuit directly with no did:web document to resolve, so it just
+    // reuses the same value propose() was given, the same way C's own real roleKeyHash()
+    // check already gets exercised below without a real did:web round-trip either.
+    resolvedPortAuthorityKeyHash: portAuthKeyHash,
   };
 
   const buyerProviders = buildEscrowProviders(buyer.midnightWalletProvider, network, buyer.role);
