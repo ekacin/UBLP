@@ -61,7 +61,6 @@ async function main(): Promise<void> {
   const contractAddress = deployed.deployTxData.public.contractAddress;
   console.log(`  Deployed at: ${contractAddress}`);
 
-  const sellerSecretKey = randomBytes32();
   const sellerMemoKeyPair = generateX25519KeyPair();
   const buyerMemoKeyPair = generateX25519KeyPair();
   const portAuthoritySecretKey = randomBytes32();
@@ -77,7 +76,6 @@ async function main(): Promise<void> {
 
   const sellerPrivateState: EscrowPrivateState = {
     ...emptyEscrowPrivateState,
-    sellerSecretKey,
     sellerAddress: zswapRecipient(hexToBytes(seller.midnightWalletProvider.getCoinPublicKey())),
     sellerAddressSalt,
     ownMemoPrivateKey: hexToBytes(sellerMemoKeyPair.privateKey),

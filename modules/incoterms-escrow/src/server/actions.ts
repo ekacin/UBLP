@@ -155,7 +155,6 @@ export interface ProposeDealResult {
 
 export async function proposeDeal(ctx: AgentContext, params: ProposeDealParams): Promise<ProposeDealResult> {
   if (ctx.role !== 'seller') throw new Error('propose() is only callable by the seller role.');
-  if (!ctx.identity.roleSecretKeyHex) throw new Error('Seller identity is missing its role secret key.');
   if (!isUBLPDid(params.buyerDid) || !isUBLPDid(params.portAuthorityDid)) {
     throw new Error('buyerDid/portAuthorityDid must be valid did:ublp:... identifiers.');
   }
@@ -194,7 +193,6 @@ export async function proposeDeal(ctx: AgentContext, params: ProposeDealParams):
 
   const privateState: EscrowPrivateState = {
     ...emptyEscrowPrivateState,
-    sellerSecretKey: hexToBytes(ctx.identity.roleSecretKeyHex),
     sellerAddress: zswapRecipient(hexToBytes(ctx.wallet.midnightWalletProvider.getCoinPublicKey())),
     sellerAddressSalt,
     ownMemoPrivateKey: hexToBytes(ctx.identity.memoKeyPair.privateKey),

@@ -103,7 +103,7 @@ describe('deal_private_state', () => {
   it('round-trips Uint8Array and bigint fields exactly', () => {
     const state = {
       ...emptyEscrowPrivateState,
-      sellerSecretKey: new Uint8Array([1, 2, 3, 4]),
+      portAuthoritySecretKey: new Uint8Array([1, 2, 3, 4]),
       sellerAddress: zswapRecipient(new Uint8Array(32).fill(7)),
       agreedAmount: 1_000_000n,
       agreedAmountSalt: new Uint8Array(32).fill(9),
@@ -111,8 +111,8 @@ describe('deal_private_state', () => {
     saveDealPrivateState(db, 'deal-4', state);
 
     const loaded = loadDealPrivateState(db, 'deal-4')!;
-    expect(loaded.sellerSecretKey).toBeInstanceOf(Uint8Array);
-    expect(Array.from(loaded.sellerSecretKey!)).toEqual([1, 2, 3, 4]);
+    expect(loaded.portAuthoritySecretKey).toBeInstanceOf(Uint8Array);
+    expect(Array.from(loaded.portAuthoritySecretKey!)).toEqual([1, 2, 3, 4]);
     expect(loaded.agreedAmount).toBe(1_000_000n);
     expect(typeof loaded.agreedAmount).toBe('bigint');
     expect(Array.from(loaded.agreedAmountSalt!)).toEqual(Array.from(new Uint8Array(32).fill(9)));

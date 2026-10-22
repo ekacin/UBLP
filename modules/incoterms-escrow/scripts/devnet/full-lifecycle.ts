@@ -53,8 +53,14 @@ async function main(): Promise<void> {
   const buyer = await buildAgentWallet('buyer', network, PASSPHRASE);
   const portAuthority = await buildAgentWallet('port-authority', network, PASSPHRASE);
 
-  // --- Step 0: validate the off-chain roleKeyHash replica against the real on-chain circuit ---
-  console.log('\n[0] Validating off-chain roleKeyHash() against the real Compact circuit...');
+  // --- Step 0: deploy + propose ---
+  // roleKeyHash()'s TS replica (src/contract/roleKeyHash.ts) used to be checked explicitly here
+  // against an on-chain `sellerKeyHash` field — that field was removed (it was never read by
+  // any circuit, see AGENTS.md). The same replica is still implicitly proven correct below: C's
+  // attestMilestone() call only succeeds if roleKeyHash(sk, domain) there matches the
+  // portAuthorityKeyHash computed here with this same function — a drift would surface as that
+  // assertion failing, loudly.
+  console.log('\n[0] Deploying and proposing...');
   const sellerProviders = buildEscrowProviders(seller.midnightWalletProvider, network, seller.role);
   const deployed = await deployContract(sellerProviders, {
     compiledContract: compiledEscrowContract,
@@ -64,7 +70,6 @@ async function main(): Promise<void> {
   const contractAddress = deployed.deployTxData.public.contractAddress;
   console.log(`  Deployed at: ${contractAddress}`);
 
-  const sellerSecretKey = randomBytes32();
   const sellerMemoKeyPair = generateX25519KeyPair();
   const buyerMemoKeyPair = generateX25519KeyPair();
   const portAuthoritySecretKey = randomBytes32();
@@ -76,7 +81,6 @@ async function main(): Promise<void> {
 
   const sellerPrivateState: EscrowPrivateState = {
     ...emptyEscrowPrivateState,
-    sellerSecretKey,
     sellerAddress: zswapRecipient(hexToBytes(seller.midnightWalletProvider.getCoinPublicKey())),
     sellerAddressSalt,
     ownMemoPrivateKey: hexToBytes(sellerMemoKeyPair.privateKey),
@@ -90,13 +94,7 @@ async function main(): Promise<void> {
   const proposeResult = await deployed.callTx.propose(portAuthKeyHash, durationSeconds, TimeoutDirection.Buyer);
 
   const stateAfterPropose = ledger((await sellerProviders.publicDataProvider.queryContractState(contractAddress))!.data);
-  const expectedSellerKeyHash = roleKeyHash(sellerSecretKey, 'incoterms-escrow:seller:v1');
-  const onChainMatches = Buffer.from(stateAfterPropose.sellerKeyHash).equals(Buffer.from(expectedSellerKeyHash));
   console.log(`  state after propose(): ${stateAfterPropose.state} (expect 1=Proposed)`);
-  console.log(`  off-chain roleKeyHash() replica matches on-chain sellerKeyHash: ${onChainMatches}`);
-  if (!onChainMatches) {
-    throw new Error('roleKeyHash() TS replica does not match the real circuit — portAuthorityKeyHash would be wrong.');
-  }
   logEscrowAction(txLog, contractAddress, 'propose', {
     amount: AGREED_AMOUNT.toString(),
     currency: 'NIGHT',

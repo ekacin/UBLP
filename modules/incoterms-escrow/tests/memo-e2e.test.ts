@@ -62,7 +62,6 @@ describe('dual-recipient memo — end to end (terms -> propose/lockEscrow witnes
     const sellerAddressSalt = new Uint8Array(32).fill(9);
     const sellerAddress = zswapRecipient(new Uint8Array(32).fill(8));
     const sellerState: EscrowPrivateState = {
-      sellerSecretKey: new Uint8Array(32).fill(1),
       portAuthoritySecretKey: null,
       sellerAddress,
       sellerAddressSalt,
@@ -86,7 +85,6 @@ describe('dual-recipient memo — end to end (terms -> propose/lockEscrow witnes
     const buyerAddressSalt = new Uint8Array(32).fill(13);
     const buyerAddress = zswapRecipient(new Uint8Array(32).fill(14));
     const buyerState: EscrowPrivateState = {
-      sellerSecretKey: null,
       portAuthoritySecretKey: null,
       sellerAddress: null,
       sellerAddressSalt: null,

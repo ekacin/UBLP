@@ -24,10 +24,12 @@ export interface LoginKeyPair {
 
 export interface SettlementIdentity {
   /**
-   * 32-byte hex secret behind `roleKeyHash()` (Escrow.compact) — `sellerSecretKey` for the
-   * seller role, `portAuthoritySecretKey` for the port-authority role. `null` for buyer: the
-   * contract has no buyer role-key witness (buyer's authority comes from actually holding the
-   * funds/signing the lockEscrow transaction, not a role-hash check).
+   * 32-byte hex secret behind `roleKeyHash()` (Escrow.compact) — `portAuthoritySecretKey` for
+   * the port-authority role. `null` for buyer and seller: the contract has no buyer role-key
+   * witness (buyer's authority comes from actually holding the funds/signing the lockEscrow
+   * transaction), and propose() no longer checks a seller role-key either — the seller's
+   * authority there comes entirely from the address/amount commitments it controls (see
+   * AGENTS.md's note on the removed `sellerKeyHash`).
    */
   roleSecretKeyHex: string | null;
   /** AGENTS.md 5.18 — X25519 keypair for the dual-recipient encrypted memo. */
@@ -62,9 +64,9 @@ export function loadOrCreateSettlementIdentity(
   passphrase: string
 ): SettlementIdentity {
   const roleSecretKeyHex =
-    role === 'buyer'
-      ? null
-      : loadOrCreateEncryptedSecret(path.join(secretsDir, `${role}-role-key.json`), passphrase, randomHex32);
+    role === 'port-authority'
+      ? loadOrCreateEncryptedSecret(path.join(secretsDir, `${role}-role-key.json`), passphrase, randomHex32)
+      : null;
 
   const memoKeyPair = loadOrCreateKeyPairJson<X25519KeyPair>(
     path.join(secretsDir, `${role}-memo-key.json`),

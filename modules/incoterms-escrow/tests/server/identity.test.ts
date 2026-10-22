@@ -15,17 +15,20 @@ afterEach(() => {
 });
 
 describe('loadOrCreateSettlementIdentity', () => {
-  it('generates a role secret key for seller and port-authority, but not for buyer', () => {
-    const seller = loadOrCreateSettlementIdentity(secretsDir, 'seller', 'pw');
-    expect(seller.roleSecretKeyHex).toMatch(/^[0-9a-f]{64}$/);
+  it('generates a role secret key for port-authority only, not for seller or buyer', () => {
+    const portAuthority = loadOrCreateSettlementIdentity(secretsDir, 'port-authority', 'pw');
+    expect(portAuthority.roleSecretKeyHex).toMatch(/^[0-9a-f]{64}$/);
+
+    const seller = loadOrCreateSettlementIdentity(path.join(secretsDir, 'seller-dir'), 'seller', 'pw');
+    expect(seller.roleSecretKeyHex).toBeNull();
 
     const buyer = loadOrCreateSettlementIdentity(path.join(secretsDir, 'buyer-dir'), 'buyer', 'pw');
     expect(buyer.roleSecretKeyHex).toBeNull();
   });
 
   it('persists identity across calls — same dir+passphrase returns the same keys', () => {
-    const first = loadOrCreateSettlementIdentity(secretsDir, 'seller', 'correct-horse');
-    const second = loadOrCreateSettlementIdentity(secretsDir, 'seller', 'correct-horse');
+    const first = loadOrCreateSettlementIdentity(secretsDir, 'port-authority', 'correct-horse');
+    const second = loadOrCreateSettlementIdentity(secretsDir, 'port-authority', 'correct-horse');
 
     expect(second.roleSecretKeyHex).toBe(first.roleSecretKeyHex);
     expect(second.memoKeyPair).toEqual(first.memoKeyPair);
@@ -33,15 +36,19 @@ describe('loadOrCreateSettlementIdentity', () => {
   });
 
   it('fails to decrypt persisted identity with the wrong passphrase', () => {
-    loadOrCreateSettlementIdentity(secretsDir, 'seller', 'right-passphrase');
-    expect(() => loadOrCreateSettlementIdentity(secretsDir, 'seller', 'wrong-passphrase')).toThrow();
+    // port-authority exercises all three encrypted files (role-key, memo-key, deal-signing-key);
+    // seller/buyer would only cover the latter two since neither has a role-key file anymore.
+    loadOrCreateSettlementIdentity(secretsDir, 'port-authority', 'right-passphrase');
+    expect(() => loadOrCreateSettlementIdentity(secretsDir, 'port-authority', 'wrong-passphrase')).toThrow();
   });
 
   it('keeps different roles in the same directory fully independent', () => {
     const seller = loadOrCreateSettlementIdentity(secretsDir, 'seller', 'pw');
     const portAuthority = loadOrCreateSettlementIdentity(secretsDir, 'port-authority', 'pw');
 
-    expect(seller.roleSecretKeyHex).not.toBe(portAuthority.roleSecretKeyHex);
+    // roleSecretKeyHex itself is no longer a meaningful independence check here — seller's is
+    // always null now, only port-authority has one — but the memo keypair is generated for
+    // every role, and must still be genuinely distinct per role.
     expect(seller.memoKeyPair.privateKey).not.toBe(portAuthority.memoKeyPair.privateKey);
   });
 

@@ -73,7 +73,6 @@ async function main(): Promise<void> {
 
   const sellerPrivateState: EscrowPrivateState = {
     ...emptyEscrowPrivateState,
-    sellerSecretKey: randomBytes32(),
     sellerAddress: zswapRecipient(hexToBytes(sellerCoinPublicKey)),
     sellerAddressSalt: randomBytes32(),
     ownMemoPrivateKey: hexToBytes(sellerMemoKeys.privateKey),

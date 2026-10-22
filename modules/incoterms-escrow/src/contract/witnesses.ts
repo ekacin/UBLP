@@ -48,8 +48,6 @@ export interface QualifiedShieldedCoin extends ShieldedCoin {
  * buyer / C) — all three share the same type, unused fields stay `null`.
  */
 export interface EscrowPrivateState {
-  /** Only populated on the seller's own agent. */
-  sellerSecretKey: Uint8Array | null;
   /** Only populated on C's own agent — see AGENTS.md 5.12. */
   portAuthoritySecretKey: Uint8Array | null;
 
@@ -72,7 +70,7 @@ export interface EscrowPrivateState {
 
   /**
    * AGENTS.md 5.18 — X25519 keypair for the dual-recipient memo, distinct from
-   * sellerSecretKey/portAuthoritySecretKey (those are role-auth hashes, not ECDH keys).
+   * portAuthoritySecretKey (a role-auth hash, not an ECDH key).
    * Whichever role holds this private state (buyer or seller) fills in its own private key
    * and the counterparty's public key — same two fields serve both directions, since ECDH
    * is symmetric (see dualRecipientMemo.ts).
@@ -91,7 +89,6 @@ export interface EscrowPrivateState {
 }
 
 export const emptyEscrowPrivateState: EscrowPrivateState = {
-  sellerSecretKey: null,
   portAuthoritySecretKey: null,
   sellerAddress: null,
   sellerAddressSalt: null,
@@ -116,12 +113,6 @@ function required<T>(value: T | null, fieldName: string): T {
 }
 
 export const escrowWitnesses: Witnesses<EscrowPrivateState> = {
-  sellerSecretKey(
-    context: WitnessContext<Ledger, EscrowPrivateState>
-  ): [EscrowPrivateState, Uint8Array] {
-    return [context.privateState, required(context.privateState.sellerSecretKey, 'sellerSecretKey')];
-  },
-
   portAuthoritySecretKey(
     context: WitnessContext<Ledger, EscrowPrivateState>
   ): [EscrowPrivateState, Uint8Array] {

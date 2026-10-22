@@ -18,7 +18,6 @@ function hexToBytes(hex: string): Uint8Array {
   return new Uint8Array(Buffer.from(hex, 'hex'));
 }
 
-const SELLER_SK = new Uint8Array(32).fill(1);
 const PORT_AUTH_SK = new Uint8Array(32).fill(2);
 const SELLER_PUBKEY = new Uint8Array(32).fill(3);
 const SALT_A = new Uint8Array(32).fill(4);
@@ -31,7 +30,6 @@ const buyerMemoKeys = generateX25519KeyPair();
 const sellerMemoKeys = generateX25519KeyPair();
 
 const filledState: EscrowPrivateState = {
-  sellerSecretKey: SELLER_SK,
   portAuthoritySecretKey: PORT_AUTH_SK,
   sellerAddress: zswapRecipient(SELLER_PUBKEY),
   sellerAddressSalt: SALT_A,
@@ -69,11 +67,6 @@ describe('zswapRecipient / contractRecipient', () => {
 });
 
 describe('escrowWitnesses — populated privateState', () => {
-  it('returns sellerSecretKey', () => {
-    const [, value] = escrowWitnesses.sellerSecretKey(contextWith(filledState));
-    expect(value).toBe(SELLER_SK);
-  });
-
   it('returns portAuthoritySecretKey', () => {
     const [, value] = escrowWitnesses.portAuthoritySecretKey(contextWith(filledState));
     expect(value).toBe(PORT_AUTH_SK);
@@ -177,7 +170,6 @@ describe('escrowWitnesses — populated privateState', () => {
 
 describe('escrowWitnesses — empty privateState (emptyEscrowPrivateState)', () => {
   const cases: Array<keyof typeof escrowWitnesses> = [
-    'sellerSecretKey',
     'portAuthoritySecretKey',
     'depositedCoin',
     'depositSalt',
