@@ -5,13 +5,14 @@
  * ROLE SEPARATION (deliberate, least-privilege): whoever builds the proof for
  * `attestMilestone` (C) only ever needs its own `portAuthoritySecretKey` — it never
  * touches the coin/address witnesses. Whoever builds `claimPayout` (in practice the seller's
- * own agent) needs the coin+salt (from the buyer) and its own address+salt — these can travel
- * over the existing buyer-seller negotiation channel (propose/accept); C is never involved.
+ * own agent) needs the coin nonce+salt it chose itself at propose() time (AGENTS.md 5.36) and
+ * its own address+salt — these travel over the existing buyer-seller negotiation channel
+ * (propose/accept); C is never involved.
  */
 
 import type { WitnessContext } from '@midnight-ntwrk/compact-runtime';
 import type { Ledger, Witnesses } from '../../contracts/managed/escrow/contract/index.js';
-import { encryptBuyerMemo, encryptSellerMemo, encryptBuyerAddressMemo } from './memo.js';
+import { encryptSellerMemo, encryptBuyerAddressMemo } from './memo.js';
 
 /** Compact's `Either<ZswapCoinPublicKey, ContractAddress>` representation — both branches
  * must be populated, `is_left` alone marks which one is active. */
@@ -69,6 +70,17 @@ export interface EscrowPrivateState {
   qualifiedCoin: QualifiedShieldedCoin | null;
 
   /**
+   * AGENTS.md 5.36 (Discord finding #3 fix) — only populated on the SELLER's agent. The
+   * coin nonce the seller itself chose at propose() time (committed via
+   * depositParamsCommitment, conveyed to the buyer via the signed terms) — the seller
+   * remembers this so it can rebuild the coin for payout later without ever needing to
+   * decrypt anything from the buyer (replaces the old, unverified buyerMemo recovery path).
+   * `depositSalt` below is reused for this same purpose (seller-chosen here too, instead of
+   * buyer-random as before).
+   */
+  depositNonce: Uint8Array | null;
+
+  /**
    * AGENTS.md 5.18 — X25519 keypair for the dual-recipient memo, distinct from
    * portAuthoritySecretKey (a role-auth hash, not an ECDH key).
    * Whichever role holds this private state (buyer or seller) fills in its own private key
@@ -106,6 +118,7 @@ export const emptyEscrowPrivateState: EscrowPrivateState = {
   depositedCoin: null,
   depositSalt: null,
   qualifiedCoin: null,
+  depositNonce: null,
   ownMemoPrivateKey: null,
   counterpartyMemoPublicKey: null,
   agreedAmount: null,
@@ -201,19 +214,6 @@ export const escrowWitnesses: Witnesses<EscrowPrivateState> = {
     return [context.privateState, encryptSellerMemo(address, salt, ownKey, counterpartyKey)];
   },
 
-  buyerEncryptedMemo(
-    context: WitnessContext<Ledger, EscrowPrivateState>
-  ): [EscrowPrivateState, Uint8Array] {
-    const coin = required(context.privateState.depositedCoin, 'depositedCoin');
-    const salt = required(context.privateState.depositSalt, 'depositSalt');
-    const ownKey = required(context.privateState.ownMemoPrivateKey, 'ownMemoPrivateKey');
-    const counterpartyKey = required(
-      context.privateState.counterpartyMemoPublicKey,
-      'counterpartyMemoPublicKey'
-    );
-    return [context.privateState, encryptBuyerMemo(coin, salt, ownKey, counterpartyKey)];
-  },
-
   agreedAmount(
     context: WitnessContext<Ledger, EscrowPrivateState>
   ): [EscrowPrivateState, bigint] {
@@ -297,5 +297,17 @@ export const escrowWitnesses: Witnesses<EscrowPrivateState> = {
       context.privateState,
       required(context.privateState.resolvedPortAuthorityKeyHash, 'resolvedPortAuthorityKeyHash'),
     ];
+  },
+
+  sellerDepositNonce(
+    context: WitnessContext<Ledger, EscrowPrivateState>
+  ): [EscrowPrivateState, Uint8Array] {
+    return [context.privateState, required(context.privateState.depositNonce, 'depositNonce')];
+  },
+
+  sellerDepositSalt(
+    context: WitnessContext<Ledger, EscrowPrivateState>
+  ): [EscrowPrivateState, Uint8Array] {
+    return [context.privateState, required(context.privateState.depositSalt, 'depositSalt')];
   },
 };

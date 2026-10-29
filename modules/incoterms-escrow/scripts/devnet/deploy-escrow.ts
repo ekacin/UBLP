@@ -79,6 +79,10 @@ async function main(): Promise<void> {
     counterpartyMemoPublicKey: hexToBytes(buyerMemoKeys.publicKey),
     agreedAmount: 1_000_000n,
     agreedAmountSalt: randomBytes32(),
+    // AGENTS.md 5.36 — propose() now also requires these (seller pre-commits the deposited
+    // coin's own nonce+salt); throwaway values here, same as everything else in this script.
+    depositNonce: randomBytes32(),
+    depositSalt: randomBytes32(),
   };
 
   console.log('Calling propose()...');

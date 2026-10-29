@@ -54,6 +54,17 @@ export interface EscrowTerms {
    * terms it verified before accepting.
    */
   amountSalt: string;
+  /**
+   * AGENTS.md 5.36 (Discord finding #3 fix) — the deposited coin's nonce+salt, chosen by the
+   * SELLER (not the buyer) and sealed into `terms` exactly like `amountSalt` above. The
+   * contract's `depositParamsCommitment` (written at propose time) forces the buyer to
+   * actually use these at lockEscrow — without this, nothing bound the buyer's locked coin to
+   * what it later told the seller (the old, removed `buyerMemo`), so a buyer could freeze a
+   * deal forever by locking real funds under one nonce/salt while reporting a different one.
+   * Hex-encoded, 32 bytes each.
+   */
+  depositNonceHex: string;
+  depositSaltHex: string;
   /** AGENTS.md 5.30 — the LENGTH of the safety window (7 days default), not an absolute
    * timestamp. The absolute deadline is fixed on-chain at lockEscrow time (anchored to real
    * block time, bounded-checked via blockTimeGte/blockTimeLte), not at propose time — see

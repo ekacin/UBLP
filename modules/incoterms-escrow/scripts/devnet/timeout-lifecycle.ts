@@ -15,9 +15,9 @@ import crypto from 'crypto';
 import * as Rx from 'rxjs';
 import { deployContract, findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
 import {
-  createShieldedCoinInfo,
   shieldedToken,
   encodeShieldedCoinInfo,
+  type ShieldedCoinInfo,
 } from '@midnight-ntwrk/midnight-js-protocol/ledger';
 import { generateX25519KeyPair } from '@ublp/shared';
 import { ledger, TimeoutDirection } from '../../contracts/managed/escrow/contract/index.js';
@@ -70,6 +70,10 @@ async function main(): Promise<void> {
 
   const amountSalt = randomBytes32();
   const sellerAddressSalt = randomBytes32();
+  // AGENTS.md 5.36 — seller pre-chooses the deposited coin's own nonce+salt, same as
+  // full-lifecycle.ts.
+  const depositNonce = randomBytes32();
+  const depositSalt = randomBytes32();
   // AGENTS.md 5.29 — a LENGTH now, not an absolute timestamp; the actual deadline gets fixed
   // at lockEscrow() time, below. Kept short (15s) so this script doesn't take long to run.
   const durationSeconds = 15n;
@@ -82,6 +86,8 @@ async function main(): Promise<void> {
     counterpartyMemoPublicKey: hexToBytes(buyerMemoKeyPair.publicKey),
     agreedAmount: AGREED_AMOUNT,
     agreedAmountSalt: amountSalt,
+    depositNonce,
+    depositSalt,
   };
   await sellerProviders.privateStateProvider.set(EscrowPrivateStateId, sellerPrivateState);
   const proposeResult = await deployed.callTx.propose(portAuthKeyHash, durationSeconds, TimeoutDirection.Buyer);
@@ -96,15 +102,16 @@ async function main(): Promise<void> {
   console.log('\n[1] Buyer shielding funds and calling lockEscrow()...');
   await shieldFundsFromGenesis(network, buyer, AGREED_AMOUNT + 10_000n);
 
-  const depositSalt = randomBytes32();
   const buyerAddressSalt = randomBytes32();
   const buyerAddress = zswapRecipient(hexToBytes(buyer.midnightWalletProvider.getCoinPublicKey()));
-  const depositedCoinSdk = createShieldedCoinInfo(shieldedToken().raw, AGREED_AMOUNT);
-  const depositedCoinEncoded = encodeShieldedCoinInfo(depositedCoinSdk) as any;
+  // AGENTS.md 5.36 — hand-built with the SELLER's pre-chosen nonce, same as full-lifecycle.ts.
+  const depositNonceHex = Buffer.from(depositNonce).toString('hex');
+  const handBuiltCoin: ShieldedCoinInfo = { type: shieldedToken().raw, nonce: depositNonceHex, value: AGREED_AMOUNT };
+  const depositedCoinEncoded = encodeShieldedCoinInfo(handBuiltCoin) as any;
   const buyerPrivateState: EscrowPrivateState = {
     ...emptyEscrowPrivateState,
     depositedCoin: {
-      nonce: hexToBytes(depositedCoinEncoded.nonce ?? depositedCoinSdk.nonce),
+      nonce: hexToBytes(depositedCoinEncoded.nonce ?? depositNonceHex),
       color: hexToBytes(depositedCoinEncoded.color),
       value: AGREED_AMOUNT,
     },

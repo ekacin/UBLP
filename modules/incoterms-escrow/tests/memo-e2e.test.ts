@@ -15,7 +15,7 @@ import {
   zswapRecipient,
   type EscrowPrivateState,
 } from '../src/contract/witnesses.js';
-import { recoverBuyerMemo, recoverSellerMemo, recoverBuyerAddressMemo } from '../src/contract/memo.js';
+import { recoverSellerMemo, recoverBuyerAddressMemo } from '../src/contract/memo.js';
 
 function contextWith(privateState: EscrowPrivateState): WitnessContext<unknown, EscrowPrivateState> {
   return { ledger: {}, privateState, contractAddress: {} as never };
@@ -70,6 +70,7 @@ describe('dual-recipient memo — end to end (terms -> propose/lockEscrow witnes
       depositedCoin: null,
       depositSalt: null,
       qualifiedCoin: null,
+      depositNonce: null,
       agreedAmount: BigInt(accepted.proposal.terms.amount),
       agreedAmountSalt: hexToBytes(accepted.proposal.terms.amountSalt),
       ...sellerMemoKeys(accepted.proposal.terms, hexToBytes(sellerMemo.privateKey)),
@@ -79,7 +80,9 @@ describe('dual-recipient memo — end to end (terms -> propose/lockEscrow witnes
     const [, proposeAmountSalt] = escrowWitnesses.agreedAmountSalt(contextWith(sellerState));
 
     // Step 3: buyer's own agent builds ITS EscrowPrivateState and calls `lockEscrow` —
-    // buyerEncryptedMemo witness fires, encrypting coin+salt for the seller.
+    // buyerAddressEncryptedMemo witness fires below, encrypting the buyer's refund
+    // address+salt for the seller (AGENTS.md 5.19). The coin itself no longer travels via a
+    // memo at all (AGENTS.md 5.36) — the seller already pre-committed its nonce+salt.
     const depositSalt = new Uint8Array(32).fill(5);
     const depositedCoin = { nonce: new Uint8Array(32).fill(6), color: new Uint8Array(32).fill(7), value: 1_000_000n };
     const buyerAddressSalt = new Uint8Array(32).fill(13);
@@ -93,11 +96,11 @@ describe('dual-recipient memo — end to end (terms -> propose/lockEscrow witnes
       depositedCoin,
       depositSalt,
       qualifiedCoin: null,
+      depositNonce: null,
       agreedAmount: BigInt(accepted.proposal.terms.amount),
       agreedAmountSalt: hexToBytes(accepted.proposal.terms.amountSalt),
       ...buyerMemoKeys(accepted.proposal.terms, hexToBytes(buyerMemo.privateKey)),
     };
-    const [, buyerMemoCiphertext] = escrowWitnesses.buyerEncryptedMemo(contextWith(buyerState));
     // Section 5.19 — buyer's own refund-address memo, populated at lockEscrow alongside the
     // coin memo above (separate ledger field, same reasoning as sellerMemo).
     const [, buyerAddressMemoCiphertext] = escrowWitnesses.buyerAddressEncryptedMemo(contextWith(buyerState));
@@ -125,15 +128,6 @@ describe('dual-recipient memo — end to end (terms -> propose/lockEscrow witnes
     expect(recoveredForBuyer.address).toEqual(sellerAddress);
     expect(recoveredForBuyer.addressSalt).toEqual(sellerAddressSalt);
 
-    // Seller recovers what the BUYER encrypted (the locked coin + deposit salt).
-    const recoveredForSeller = recoverBuyerMemo(
-      buyerMemoCiphertext,
-      hexToBytes(sellerMemo.privateKey),
-      hexToBytes(buyerMemo.publicKey)
-    );
-    expect(recoveredForSeller.coin).toEqual(depositedCoin);
-    expect(recoveredForSeller.depositSalt).toEqual(depositSalt);
-
     // Loss-recovery case: the AUTHOR of a memo can also recover their own data straight off
     // the chain, with no dependency on the counterparty at all (AGENTS.md 5.18's whole point).
     const sellerSelfRecovery = recoverSellerMemo(
@@ -142,13 +136,6 @@ describe('dual-recipient memo — end to end (terms -> propose/lockEscrow witnes
       hexToBytes(buyerMemo.publicKey)
     );
     expect(sellerSelfRecovery.addressSalt).toEqual(sellerAddressSalt);
-
-    const buyerSelfRecovery = recoverBuyerMemo(
-      buyerMemoCiphertext,
-      hexToBytes(buyerMemo.privateKey),
-      hexToBytes(sellerMemo.publicKey)
-    );
-    expect(buyerSelfRecovery.depositSalt).toEqual(depositSalt);
 
     // Section 5.19 — seller recovers buyer's refund address+salt (needed if releaseOnTimeout
     // ever has to pay the buyer back), same dual-recipient guarantee as everything else.

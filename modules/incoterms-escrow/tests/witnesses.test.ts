@@ -8,7 +8,7 @@ import {
   contractRecipient,
   type EscrowPrivateState,
 } from '../src/contract/witnesses.js';
-import { recoverBuyerMemo, recoverSellerMemo, recoverBuyerAddressMemo } from '../src/contract/memo.js';
+import { recoverSellerMemo, recoverBuyerAddressMemo } from '../src/contract/memo.js';
 
 function contextWith(privateState: EscrowPrivateState): WitnessContext<unknown, EscrowPrivateState> {
   return { ledger: {}, privateState, contractAddress: {} as never };
@@ -26,6 +26,7 @@ const AMOUNT_SALT = new Uint8Array(32).fill(10);
 const BUYER_PUBKEY = new Uint8Array(32).fill(11);
 const SALT_C = new Uint8Array(32).fill(12);
 const RESOLVED_PORT_AUTH_HASH = new Uint8Array(32).fill(13);
+const DEPOSIT_NONCE = new Uint8Array(32).fill(14);
 
 const buyerMemoKeys = generateX25519KeyPair();
 const sellerMemoKeys = generateX25519KeyPair();
@@ -50,6 +51,7 @@ const filledState: EscrowPrivateState = {
   agreedAmount: 1_000_000n,
   agreedAmountSalt: AMOUNT_SALT,
   resolvedPortAuthorityKeyHash: RESOLVED_PORT_AUTH_HASH,
+  depositNonce: DEPOSIT_NONCE,
 };
 
 describe('zswapRecipient / contractRecipient', () => {
@@ -117,18 +119,6 @@ describe('escrowWitnesses — populated privateState', () => {
     expect(recovered.addressSalt).toEqual(SALT_A);
   });
 
-  it('buyerEncryptedMemo produces bytes recoverable back to the original coin+salt', () => {
-    const [, memo] = escrowWitnesses.buyerEncryptedMemo(contextWith(filledState));
-    expect(memo.length).toBe(141);
-    const recovered = recoverBuyerMemo(
-      memo,
-      filledState.ownMemoPrivateKey!,
-      filledState.counterpartyMemoPublicKey!
-    );
-    expect(recovered.coin).toEqual(filledState.depositedCoin);
-    expect(recovered.depositSalt).toEqual(SALT_B);
-  });
-
   it('agreedAmount and lockedAmount return the SAME amount (must verify the same commitment)', () => {
     const [, proposed] = escrowWitnesses.agreedAmount(contextWith(filledState));
     const [, locked] = escrowWitnesses.lockedAmount(contextWith(filledState));
@@ -173,6 +163,18 @@ describe('escrowWitnesses — populated privateState', () => {
     const [, value] = escrowWitnesses.resolvedPortAuthorityKeyHash(contextWith(filledState));
     expect(value).toBe(RESOLVED_PORT_AUTH_HASH);
   });
+
+  it('returns sellerDepositNonce (AGENTS.md 5.36 — seller pre-commits the coin nonce)', () => {
+    const [, value] = escrowWitnesses.sellerDepositNonce(contextWith(filledState));
+    expect(value).toBe(DEPOSIT_NONCE);
+  });
+
+  it('sellerDepositSalt and depositSalt return the SAME salt (seller pre-commits, buyer must match)', () => {
+    const [, sellerSalt] = escrowWitnesses.sellerDepositSalt(contextWith(filledState));
+    const [, buyerSalt] = escrowWitnesses.depositSalt(contextWith(filledState));
+    expect(sellerSalt).toBe(SALT_B);
+    expect(buyerSalt).toBe(SALT_B);
+  });
 });
 
 describe('escrowWitnesses — empty privateState (emptyEscrowPrivateState)', () => {
@@ -187,7 +189,6 @@ describe('escrowWitnesses — empty privateState (emptyEscrowPrivateState)', () 
     'payoutSellerAddress',
     'payoutAddressSalt',
     'sellerEncryptedMemo',
-    'buyerEncryptedMemo',
     'agreedAmount',
     'agreedAmountSalt',
     'lockedAmount',
@@ -198,6 +199,8 @@ describe('escrowWitnesses — empty privateState (emptyEscrowPrivateState)', () 
     'payoutBuyerAddress',
     'payoutBuyerAddressSalt',
     'resolvedPortAuthorityKeyHash',
+    'sellerDepositNonce',
+    'sellerDepositSalt',
   ];
 
   for (const name of cases) {

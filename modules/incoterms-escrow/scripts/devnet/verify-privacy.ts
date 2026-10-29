@@ -59,6 +59,10 @@ async function main(): Promise<void> {
   const sellerAddressSalt = randomBytes32();
   const agreedAmount = 1_000_000n;
   const agreedAmountSalt = randomBytes32();
+  // AGENTS.md 5.36 — propose() now also commits these (seller-chosen deposit nonce+salt);
+  // included in the leak check below too, same treatment as every other secret here.
+  const depositNonce = randomBytes32();
+  const depositSalt = randomBytes32();
 
   const sellerPrivateState: EscrowPrivateState = {
     ...emptyEscrowPrivateState,
@@ -68,6 +72,8 @@ async function main(): Promise<void> {
     counterpartyMemoPublicKey: hexToBytes(buyerMemoKeys.publicKey),
     agreedAmount,
     agreedAmountSalt,
+    depositNonce,
+    depositSalt,
   };
 
   console.log('Calling propose()...');
@@ -96,6 +102,8 @@ async function main(): Promise<void> {
     ['agreed amount salt (hex)', Buffer.from(agreedAmountSalt).toString('hex')],
     ['seller memo private key (hex)', sellerMemoKeys.privateKey.toLowerCase()],
     ['buyer memo private key (hex)', buyerMemoKeys.privateKey.toLowerCase()],
+    ['deposit nonce (hex)', Buffer.from(depositNonce).toString('hex')],
+    ['deposit salt (hex)', Buffer.from(depositSalt).toString('hex')],
   ];
 
   console.log('\n--- Leak check: none of these should appear in the raw on-chain state ---');

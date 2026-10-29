@@ -14,7 +14,7 @@
 
 import crypto from 'crypto';
 import { deployContract, findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
-import { createShieldedCoinInfo, shieldedToken, encodeShieldedCoinInfo } from '@midnight-ntwrk/midnight-js-protocol/ledger';
+import { shieldedToken, encodeShieldedCoinInfo, type ShieldedCoinInfo } from '@midnight-ntwrk/midnight-js-protocol/ledger';
 import { generateX25519KeyPair } from '@ublp/shared';
 import { ledger, TimeoutDirection } from '../../contracts/managed/escrow/contract/index.js';
 import {
@@ -87,6 +87,9 @@ async function main(): Promise<void> {
 
   const amountSalt = randomBytes32();
   const sellerAddressSalt = randomBytes32();
+  // AGENTS.md 5.36 — seller pre-chooses the deposited coin's own nonce+salt.
+  const depositNonce = randomBytes32();
+  const depositSalt = randomBytes32();
   // Long duration (7 days) — releaseOnTimeout's "too early" rejection needs the eventual
   // deadline (fixed at lockEscrow time, AGENTS.md 5.29) to stay in the future for the entire
   // script run.
@@ -100,6 +103,8 @@ async function main(): Promise<void> {
     counterpartyMemoPublicKey: hexToBytes(buyerMemoKeyPair.publicKey),
     agreedAmount: AGREED_AMOUNT,
     agreedAmountSalt: amountSalt,
+    depositNonce,
+    depositSalt,
   };
   await sellerProviders.privateStateProvider.set(EscrowPrivateStateId, sellerPrivateState);
   await deployed.callTx.propose(portAuthKeyHash, durationSeconds, TimeoutDirection.Buyer);
@@ -112,11 +117,13 @@ async function main(): Promise<void> {
     await deployed.callTx.propose(portAuthKeyHash, durationSeconds, TimeoutDirection.Buyer);
   });
 
-  const depositSalt = randomBytes32();
-  const depositedCoinSdk = createShieldedCoinInfo(shieldedToken().raw, AGREED_AMOUNT);
-  const depositedCoinEncoded = encodeShieldedCoinInfo(depositedCoinSdk) as any;
+  // AGENTS.md 5.36 — hand-built with the SELLER's pre-chosen nonce (set above, before
+  // propose()), not createShieldedCoinInfo (which would pick its own random one).
+  const depositNonceHex = Buffer.from(depositNonce).toString('hex');
+  const handBuiltCoin: ShieldedCoinInfo = { type: shieldedToken().raw, nonce: depositNonceHex, value: AGREED_AMOUNT };
+  const depositedCoinEncoded = encodeShieldedCoinInfo(handBuiltCoin) as any;
   const realDepositedCoin = {
-    nonce: hexToBytes(depositedCoinEncoded.nonce ?? depositedCoinSdk.nonce),
+    nonce: hexToBytes(depositedCoinEncoded.nonce ?? depositNonceHex),
     color: hexToBytes(depositedCoinEncoded.color),
     value: AGREED_AMOUNT,
   };
@@ -158,6 +165,37 @@ async function main(): Promise<void> {
       ...basebuyerPrivateState,
       depositedCoin: realDepositedCoin,
       agreedAmount: AGREED_AMOUNT + 1n, // wrong — won't reproduce the propose-time commitment
+      agreedAmountSalt: amountSalt,
+    };
+    const contract = await findDeployedContract(buyerProviders, {
+      contractAddress,
+      compiledContract: compiledEscrowContract,
+      privateStateId: EscrowPrivateStateId,
+      initialPrivateState: wrongState,
+    });
+    await contract.callTx.lockEscrow(claimedLockTime());
+  });
+
+  // AGENTS.md 5.36 (Discord finding #3 fix) — THE key new guard this fix adds: a buyer who
+  // uses a nonce/salt different from what the seller committed to at propose() time must be
+  // rejected, even though the coin's VALUE is otherwise correct. Without this check, a buyer
+  // could lock real funds under one nonce/salt while reporting a different one to the seller
+  // (the old, removed buyerMemo), permanently freezing the deal.
+  await expectRejected('lockEscrow() with a deposit nonce/salt that does not match depositParamsCommitment', async () => {
+    const wrongNonceCoin: ShieldedCoinInfo = {
+      type: shieldedToken().raw,
+      nonce: Buffer.from(randomBytes32()).toString('hex'), // NOT the seller-committed nonce
+      value: AGREED_AMOUNT,
+    };
+    const wrongNonceEncoded = encodeShieldedCoinInfo(wrongNonceCoin) as any;
+    const wrongState: EscrowPrivateState = {
+      ...basebuyerPrivateState,
+      depositedCoin: {
+        nonce: hexToBytes(wrongNonceEncoded.nonce ?? wrongNonceCoin.nonce),
+        color: hexToBytes(wrongNonceEncoded.color),
+        value: AGREED_AMOUNT,
+      },
+      agreedAmount: AGREED_AMOUNT,
       agreedAmountSalt: amountSalt,
     };
     const contract = await findDeployedContract(buyerProviders, {
@@ -295,6 +333,11 @@ async function main(): Promise<void> {
 
   const amountSalt2 = randomBytes32();
   const sellerAddressSalt2 = randomBytes32();
+  // AGENTS.md 5.36 — fresh nonce for this SECOND, separate deal (reusing deal 1's nonce would
+  // produce an identical coin commitment — same value+color+nonce — which the real shielded
+  // pool rejects; nonce exists specifically to keep every coin instance unique).
+  const depositNonce2 = randomBytes32();
+  const depositSalt2 = randomBytes32();
   const sellerPrivateState2: EscrowPrivateState = {
     ...emptyEscrowPrivateState,
     sellerAddress: zswapRecipient(hexToBytes(seller.midnightWalletProvider.getCoinPublicKey())),
@@ -303,18 +346,27 @@ async function main(): Promise<void> {
     counterpartyMemoPublicKey: hexToBytes(buyerMemoKeyPair.publicKey),
     agreedAmount: AGREED_AMOUNT,
     agreedAmountSalt: amountSalt2,
+    depositNonce: depositNonce2,
+    depositSalt: depositSalt2,
   };
   await sellerProviders.privateStateProvider.set(EscrowPrivateStateId, sellerPrivateState2);
   await deployed2.callTx.propose(portAuthKeyHash, shortDuration, TimeoutDirection.Buyer);
   console.log('  propose() succeeded (20s deadline).');
 
   await shieldFundsFromGenesis(network, buyer, AGREED_AMOUNT + 10_000n);
-  const depositSalt2 = randomBytes32();
+  const depositNonce2Hex = Buffer.from(depositNonce2).toString('hex');
+  const handBuiltCoin2: ShieldedCoinInfo = { type: shieldedToken().raw, nonce: depositNonce2Hex, value: AGREED_AMOUNT };
+  const depositedCoinEncoded2 = encodeShieldedCoinInfo(handBuiltCoin2) as any;
+  const realDepositedCoin2 = {
+    nonce: hexToBytes(depositedCoinEncoded2.nonce ?? depositNonce2Hex),
+    color: hexToBytes(depositedCoinEncoded2.color),
+    value: AGREED_AMOUNT,
+  };
   const buyerAddressSalt2 = randomBytes32();
   const buyerAddress2 = zswapRecipient(hexToBytes(buyer.midnightWalletProvider.getCoinPublicKey()));
   const buyerPrivateState2: EscrowPrivateState = {
     ...emptyEscrowPrivateState,
-    depositedCoin: realDepositedCoin,
+    depositedCoin: realDepositedCoin2,
     depositSalt: depositSalt2,
     buyerAddress: buyerAddress2,
     buyerAddressSalt: buyerAddressSalt2,
@@ -351,7 +403,7 @@ async function main(): Promise<void> {
   await expectRejected('releaseOnTimeout() after C already attested (deadline has also passed)', async () => {
     const releaseState2: EscrowPrivateState = {
       ...emptyEscrowPrivateState,
-      qualifiedCoin: { ...realDepositedCoin, mt_index: mtIndex2 },
+      qualifiedCoin: { ...realDepositedCoin2, mt_index: mtIndex2 },
       depositSalt: depositSalt2,
       buyerAddress: buyerAddress2,
       buyerAddressSalt: buyerAddressSalt2,

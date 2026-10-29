@@ -30,6 +30,8 @@ function baseTerms(): EscrowTerms {
     incoterm: 'FOB',
     amount: '1000000',
     amountSalt: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('hex'),
+    depositNonceHex: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('hex'),
+    depositSaltHex: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('hex'),
     durationSeconds: 7 * 24 * 60 * 60,
     timeoutDirection: 'buyer',
     sellerMemoPublicKey: sellerMemo.publicKey,

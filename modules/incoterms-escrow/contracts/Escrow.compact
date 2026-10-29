@@ -31,6 +31,17 @@
 //      decides which commitment `releaseOnTimeout` pays out to).
 //
 // (See AGENTS.md 5.14.1 for the experiment that validated this commitment pattern.)
+//
+// AGENTS.md 5.36 (Discord finding #3 fix) — the deposited coin's `nonce`/`depositSalt` are now
+// SELLER-chosen, committed at propose() time (depositParamsCommitment) exactly like
+// agreedAmountCommitment, and conveyed to the buyer off-chain via the signed EscrowTerms (same
+// trust model as amountSalt). lockEscrow() asserts the buyer actually used them. This replaces
+// the old `buyerMemo` mechanism (seller recovering the coin by decrypting a buyer-supplied,
+// unverified memo) — that memo's plaintext was never checked against heldCommitment, so a
+// buyer could lock real funds while writing garbage into the memo, permanently freezing the
+// deal (the seller could never recover the coin to claim payout). Removed entirely rather than
+// patched: once the seller pre-commits the coin's own parameters, it never needs the memo at
+// all.
 pragma language_version >= 0.22;
 
 import CompactStandardLibrary;
@@ -74,9 +85,13 @@ export ledger timeoutDirection: TimeoutDirection; // Section 5.19 — who releas
 // "push the burden onto the system" principle).
 export ledger milestoneConfirmed: Boolean;
 
-// Neither is exported — only commitment hashes. Neither the amount nor the buyer/seller
-// address ever reaches the chain in plaintext (see privacy note above).
-ledger heldCommitment: Bytes<32>;
+// Only commitment hashes — neither the amount nor the buyer/seller address ever reaches
+// the chain in plaintext (see privacy note above). `heldCommitment` is exported (AGENTS.md
+// 5.36's Fix B) so the seller's own agent can read this already-public hash via the normal
+// SDK accessor, instead of the raw-state-dump workaround verify-privacy.ts uses — exporting
+// it changes nothing about what's physically on-chain (5.14.1: export only adds a TS
+// getter), so this is not a privacy change, just a convenience one.
+export ledger heldCommitment: Bytes<32>;
 ledger sellerAddressCommitment: Bytes<32>;
 ledger buyerAddressCommitment: Bytes<32>;   // Section 5.19 — mirrors sellerAddressCommitment
 
@@ -87,18 +102,27 @@ ledger buyerAddressCommitment: Bytes<32>;   // Section 5.19 — mirrors sellerAd
 // that the locked coin's value equals it — knowing the number alone isn't enough.
 ledger agreedAmountCommitment: Bytes<32>;
 
+// AGENTS.md 5.36 — the seller's pre-committed coin nonce+depositSalt (see propose()/
+// lockEscrow() below). persistentCommit(nonce, salt) binds BOTH values together using salt
+// as the opening, the same shape agreedAmountCommitment already uses for amount+amountSalt.
+ledger depositParamsCommitment: Bytes<32>;
+
 // AGENTS.md Section 5.18 — dual-recipient encrypted memo. Solves a gap the commitment
-// pattern above leaves open: only the party that generated a witness value (coin+salt,
-// address+salt) can ever produce it again, so losing local storage means the funds are
-// stuck forever — even `releaseOnTimeout` needs the same witness data. Each memo is
-// encrypted off-chain (TypeScript) via a static-static X25519 ECDH shared secret, so
-// EITHER the counterparty or the original author can recover it — see
-// @ublp/shared/crypto/dualRecipientMemo. The contract only stores opaque bytes; it never
-// sees the plaintext. Sizes are fixed by the plaintext layout chosen in
-// src/contract/memo.ts: buyerMemo carries coin+depositSalt (112 bytes), sellerMemo carries
-// address+addressSalt (97 bytes); both grow by 1 (scheme) + 12 (nonce) + 16 (AEAD tag) = 29
-// bytes once encrypted.
-export ledger buyerMemo: Bytes<141>;
+// pattern above leaves open: only the party that generated a witness value (address+salt)
+// can ever produce it again, so losing local storage means the funds are stuck forever —
+// even `releaseOnTimeout` needs the same witness data. Each memo is encrypted off-chain
+// (TypeScript) via a static-static X25519 ECDH shared secret, so EITHER the counterparty or
+// the original author can recover it — see @ublp/shared/crypto/dualRecipientMemo. The
+// contract only stores opaque bytes; it never sees the plaintext. Sizes are fixed by the
+// plaintext layout chosen in src/contract/memo.ts: address+addressSalt (97 bytes), growing
+// by 1 (scheme) + 12 (nonce) + 16 (AEAD tag) = 29 bytes once encrypted = 126 total.
+//
+// A THIRD memo (`buyerMemo`, coin+depositSalt) used to exist here for the same reason, but
+// was removed (AGENTS.md 5.36, Discord finding #3): its plaintext was never checked against
+// `heldCommitment`, so a buyer could lock real funds while writing a garbage memo, freezing
+// the deal permanently. Fixed instead by having the seller pre-commit the coin's own
+// nonce+salt at propose() time (see depositParamsCommitment below) — the seller never needs
+// to recover this data from anywhere, so no memo is needed for it at all.
 export ledger sellerMemo: Bytes<126>;
 // Section 5.19 — buyer's own payout-address memo, kept SEPARATE from buyerMemo (coin
 // custody data) on purpose: different concern, decoded independently, simpler to reason
@@ -116,7 +140,6 @@ witness sellerAddressSalt(): Bytes<32>;
 witness payoutSellerAddress(): Either<ZswapCoinPublicKey, ContractAddress>;
 witness payoutAddressSalt(): Bytes<32>;
 witness sellerEncryptedMemo(): Bytes<126>;
-witness buyerEncryptedMemo(): Bytes<141>;
 witness agreedAmount(): Uint<128>;
 witness agreedAmountSalt(): Bytes<32>;
 witness lockedAmount(): Uint<128>;
@@ -135,6 +158,13 @@ witness payoutBuyerAddressSalt(): Bytes<32>;
 // make either party individually authoritative over C's identity; it requires BOTH to agree,
 // which is the most either side can do without a central registry (already rejected, 5.12).
 witness resolvedPortAuthorityKeyHash(): Bytes<32>;
+
+// AGENTS.md 5.36 (Discord finding #3 fix) — the seller's own pre-chosen coin nonce+salt,
+// used ONLY in propose() to compute depositParamsCommitment below. The buyer's lockEscrow()
+// still calls the existing depositedCoin()/depositSalt() witnesses (unchanged) — only their
+// TS-side source changes (seller-provided via signed terms, not buyer-random).
+witness sellerDepositNonce(): Bytes<32>;
+witness sellerDepositSalt(): Bytes<32>;
 
 // Domain-separated hash-based authentication — see the security skill's Pattern 2. Used for
 // C's role-key check in attestMilestone(); the domain separator keeps this independent of any
@@ -166,6 +196,14 @@ export circuit propose(portAuthKeyHash: Bytes<32>, durationSecondsArg: Uint<64>,
   const amount = agreedAmount();
   const amountSalt = agreedAmountSalt();
   agreedAmountCommitment = disclose(persistentCommit<Uint<128>>(amount, amountSalt));
+
+  // AGENTS.md 5.36 — seller pre-commits the coin's own nonce+salt here, the same way it just
+  // pre-committed the amount above. depositSalt doubles as this commitment's opening AND
+  // (later, at lockEscrow time) heldCommitment's opening — exactly how amountSalt already
+  // serves two commitments (agreedAmountCommitment here, the lockedAmount check below).
+  const depNonce = sellerDepositNonce();
+  const depSalt = sellerDepositSalt();
+  depositParamsCommitment = disclose(persistentCommit<Bytes<32>>(depNonce, depSalt));
 
   state = EscrowState.Proposed;
 }
@@ -205,6 +243,16 @@ export circuit lockEscrow(claimedLockTime: Uint<64>): [] {
   const coin = depositedCoin();
   const salt = depositSalt();
 
+  // AGENTS.md 5.36 (Discord finding #3 fix) — the buyer must actually use the nonce+salt the
+  // seller pre-committed to at propose() time (conveyed off-chain via the signed terms, same
+  // as amountSalt). Without this, nothing stopped the buyer from locking real funds under one
+  // nonce/salt while telling the seller (via the old buyerMemo) a different one — the seller
+  // could never then recover the real coin to claim payout.
+  assert(
+    persistentCommit<Bytes<32>>(coin.nonce, salt) == depositParamsCommitment,
+    "deposited coin's nonce/salt do not match what the seller committed to at propose time"
+  );
+
   const amount = lockedAmount();
   const amountSalt = lockedAmountSalt();
   assert(
@@ -216,7 +264,6 @@ export circuit lockEscrow(claimedLockTime: Uint<64>): [] {
   receiveShielded(disclose(coin));
   const core = CoinCore { nonce: coin.nonce, color: coin.color, value: coin.value };
   heldCommitment = disclose(persistentCommit<CoinCore>(core, salt));
-  buyerMemo = disclose(buyerEncryptedMemo());
 
   const buyerAddr = proposedBuyerAddress();
   const buyerAddrSalt = buyerAddressSalt();

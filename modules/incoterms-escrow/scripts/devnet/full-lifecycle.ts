@@ -5,18 +5,19 @@
  * real ZK proofs, and a real shielded coin actually moving on-chain.
  *
  * Unlike deploy-escrow.ts (which only sanity-checked propose()), this exercises every
- * circuit and every witness path, including the dual-recipient memo recovery (Section 5.18):
- * the "seller" role never independently knows the deposited coin's nonce/salt — it recovers
- * them by decrypting `buyerMemo` off the chain, exactly as a real seller agent would.
+ * circuit and every witness path. AGENTS.md 5.36 (Discord finding #3 fix): the deposited
+ * coin's nonce+salt are now SELLER-chosen at propose() time (depositParamsCommitment), not
+ * recovered from a buyer-supplied memo — the seller already knows everything it needs for
+ * claimPayout without decrypting anything.
  */
 
 import crypto from 'crypto';
 import * as Rx from 'rxjs';
 import { deployContract, findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
 import {
-  createShieldedCoinInfo,
   shieldedToken,
   encodeShieldedCoinInfo,
+  type ShieldedCoinInfo,
 } from '@midnight-ntwrk/midnight-js-protocol/ledger';
 import { generateX25519KeyPair } from '@ublp/shared';
 import { ledger, TimeoutDirection } from '../../contracts/managed/escrow/contract/index.js';
@@ -27,7 +28,6 @@ import {
   zswapRecipient,
   type EscrowPrivateState,
 } from '../../src/contract/index.js';
-import { recoverBuyerMemo } from '../../src/contract/memo.js';
 import { UndeployedNetworkConfig } from '../../src/deploy/networks.js';
 import { buildAgentWallet, closeAgentWallet } from '../../src/deploy/wallet.js';
 import { buildEscrowProviders } from '../../src/deploy/providers.js';
@@ -78,6 +78,11 @@ async function main(): Promise<void> {
   const amountSalt = randomBytes32();
   const sellerAddressSalt = randomBytes32();
   const durationSeconds = BigInt(7 * 24 * 60 * 60); // AGENTS.md 5.29 — length, not an absolute timestamp anymore
+  // AGENTS.md 5.36 — seller pre-chooses the deposited coin's own nonce+salt here, conveyed to
+  // the buyer off-chain in a real deal (signed EscrowTerms); this script plays both roles, so
+  // it just shares the same values directly below.
+  const depositNonce = randomBytes32();
+  const depositSalt = randomBytes32();
 
   const sellerPrivateState: EscrowPrivateState = {
     ...emptyEscrowPrivateState,
@@ -87,6 +92,8 @@ async function main(): Promise<void> {
     counterpartyMemoPublicKey: hexToBytes(buyerMemoKeyPair.publicKey),
     agreedAmount: AGREED_AMOUNT,
     agreedAmountSalt: amountSalt,
+    depositNonce,
+    depositSalt,
   };
   await sellerProviders.privateStateProvider.set(EscrowPrivateStateId, sellerPrivateState);
 
@@ -106,15 +113,19 @@ async function main(): Promise<void> {
   console.log('\n[1] Buyer shielding funds and calling lockEscrow()...');
   await shieldFundsFromGenesis(network, buyer, AGREED_AMOUNT + 10_000n); // headroom for change
 
-  const depositSalt = randomBytes32();
-  const depositedCoinSdk = createShieldedCoinInfo(shieldedToken().raw, AGREED_AMOUNT);
-  const depositedCoinEncoded = encodeShieldedCoinInfo(depositedCoinSdk) as any;
+  // AGENTS.md 5.36 — hand-built with the SELLER's pre-chosen nonce (not createShieldedCoinInfo,
+  // which would pick its own random one) — confirmed working end-to-end via a live devnet
+  // experiment (2026-10-29): lockEscrow()'s depositParamsCommitment assert requires this exact
+  // nonce+salt, matching what propose() committed to above.
+  const depositNonceHex = Buffer.from(depositNonce).toString('hex');
+  const handBuiltCoin: ShieldedCoinInfo = { type: shieldedToken().raw, nonce: depositNonceHex, value: AGREED_AMOUNT };
+  const depositedCoinEncoded = encodeShieldedCoinInfo(handBuiltCoin) as any;
 
   const buyerAddressSalt = randomBytes32();
   const buyerPrivateState: EscrowPrivateState = {
     ...emptyEscrowPrivateState,
     depositedCoin: {
-      nonce: hexToBytes(depositedCoinEncoded.nonce ?? depositedCoinSdk.nonce),
+      nonce: hexToBytes(depositedCoinEncoded.nonce ?? depositNonceHex),
       color: hexToBytes(depositedCoinEncoded.color),
       value: AGREED_AMOUNT,
     },
@@ -175,20 +186,23 @@ async function main(): Promise<void> {
   console.log(`  milestoneConfirmed after attest: ${stateAfterAttest.milestoneConfirmed} (expect true)`);
   logEscrowAction(txLog, contractAddress, 'attestMilestone', { txId: attestResult.public.txId });
 
-  // --- Step 3: seller recovers the deposited coin from buyerMemo (NOT copied out-of-band —
-  // this is the real dual-recipient-memo recovery path, Section 5.18) and claims payout ---
-  console.log('\n[3] Seller recovering buyerMemo and calling claimPayout()...');
-  const recovered = recoverBuyerMemo(stateAfterAttest.buyerMemo, hexToBytes(sellerMemoKeyPair.privateKey), hexToBytes(buyerMemoKeyPair.publicKey));
-  console.log(`  Recovered deposit salt matches buyer's original: ${Buffer.from(recovered.depositSalt).equals(Buffer.from(depositSalt))}`);
-  console.log(`  Recovered coin value: ${recovered.coin.value} (expect ${AGREED_AMOUNT})`);
+  // --- Step 3: seller claims payout. AGENTS.md 5.36 — no memo decryption: the seller already
+  // knows the real coin (it chose nonce+salt itself at propose() time, value is the agreed
+  // amount) — just rebuild the exact same encoded coin lockEscrow() used. ---
+  console.log('\n[3] Seller calling claimPayout() (no buyerMemo decryption needed)...');
 
   // The coin's real Merkle-tree index was already resolved above via findContractCoinMtIndex
   // (mt_index=0 was tried first and failed with "invalid index into sparse merkle tree: 0" —
   // see AGENTS.md 5.23).
   const sellerClaimPrivateState: EscrowPrivateState = {
     ...emptyEscrowPrivateState,
-    qualifiedCoin: { ...recovered.coin, mt_index: depositedCoinMtIndex },
-    depositSalt: recovered.depositSalt,
+    qualifiedCoin: {
+      nonce: hexToBytes(depositedCoinEncoded.nonce ?? depositNonceHex),
+      color: hexToBytes(depositedCoinEncoded.color),
+      value: AGREED_AMOUNT,
+      mt_index: depositedCoinMtIndex,
+    },
+    depositSalt,
     sellerAddress: sellerPrivateState.sellerAddress,
     sellerAddressSalt,
   };
@@ -204,7 +218,7 @@ async function main(): Promise<void> {
   console.log(`  state after claimPayout(): ${stateAfterClaim.state} (expect 3=Released)`);
   logEscrowAction(txLog, contractAddress, 'claimPayout', {
     counterparty: buyer.midnightWalletProvider.getCoinPublicKey(),
-    amount: recovered.coin.value.toString(),
+    amount: AGREED_AMOUNT.toString(),
     currency: 'NIGHT',
     txId: claimResult.public.txId,
   });

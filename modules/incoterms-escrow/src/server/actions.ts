@@ -19,9 +19,9 @@
 import crypto from 'crypto';
 import { deployContract, findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
 import {
-  createShieldedCoinInfo,
   shieldedToken,
   encodeShieldedCoinInfo,
+  type ShieldedCoinInfo,
 } from '@midnight-ntwrk/midnight-js-protocol/ledger';
 import {
   openTransactionLog,
@@ -42,8 +42,8 @@ import {
   zswapRecipient,
   type EscrowPrivateState,
 } from '../contract/index.js';
-import { recoverBuyerMemo } from '../contract/memo.js';
 import { roleKeyHash } from '../contract/roleKeyHash.js';
+import { computeHeldCommitment } from '../contract/coinCommitment.js';
 import { findContractCoinMtIndex, waitForContractCoinMtIndex } from '../contract/mtIndex.js';
 import { resolvePortAuthorityKeyHash } from './portAuthority.js';
 import type { AgentWallet, AgentRole } from '../deploy/wallet.js';
@@ -175,6 +175,12 @@ export async function proposeDeal(ctx: AgentContext, params: ProposeDealParams):
 
   const sellerAddressSalt = randomBytes32();
   const amountSaltBytes = randomBytes32();
+  // AGENTS.md 5.36 (Discord finding #3 fix) — seller pre-chooses the deposited coin's own
+  // nonce+salt here, the same way it already pre-chooses amountSalt above. Sealed into the
+  // signed terms below; the contract's depositParamsCommitment then forces the buyer to
+  // actually use them at lockEscrow time.
+  const depositNonceBytes = randomBytes32();
+  const depositSaltBytes = randomBytes32();
   const durationSeconds = params.durationSeconds ?? DEFAULT_DURATION_SECONDS;
   const timeoutDirection = params.timeoutDirection ?? 'buyer';
 
@@ -187,6 +193,8 @@ export async function proposeDeal(ctx: AgentContext, params: ProposeDealParams):
     incoterm: params.incoterm,
     amount: params.agreedAmount,
     amountSalt: Buffer.from(amountSaltBytes).toString('hex'),
+    depositNonceHex: Buffer.from(depositNonceBytes).toString('hex'),
+    depositSaltHex: Buffer.from(depositSaltBytes).toString('hex'),
     durationSeconds,
     timeoutDirection,
     sellerMemoPublicKey: ctx.identity.memoKeyPair.publicKey,
@@ -206,6 +214,8 @@ export async function proposeDeal(ctx: AgentContext, params: ProposeDealParams):
     counterpartyMemoPublicKey: hexToBytes(params.buyerMemoPublicKeyHex),
     agreedAmount: BigInt(params.agreedAmount),
     agreedAmountSalt: amountSaltBytes,
+    depositNonce: depositNonceBytes,
+    depositSalt: depositSaltBytes,
   };
   await ctx.providers.privateStateProvider.set(EscrowPrivateStateId, privateState);
   saveDealPrivateState(ctx.db, contractAddress, privateState);
@@ -351,17 +361,26 @@ export async function lockDeal(ctx: AgentContext, params: LockDealParams): Promi
   }
 
   const amount = BigInt(terms.amount);
-  const depositSalt = randomBytes32();
   const buyerAddressSalt = randomBytes32();
-  const depositedCoinSdk = createShieldedCoinInfo(shieldedToken().raw, amount);
+  // AGENTS.md 5.36 (Discord finding #3 fix) — the coin's nonce+salt are no longer generated
+  // here; they're the SELLER's pre-chosen values from the signed terms (depositParamsCommitment
+  // forces the circuit to reject lockEscrow if we used anything else). Hand-built rather than
+  // createShieldedCoinInfo() (which would pick its own random nonce) — confirmed working
+  // end-to-end (lock + later spend, real ZK proofs) via a live devnet experiment (2026-10-29).
+  const handBuiltCoin: ShieldedCoinInfo = {
+    type: shieldedToken().raw,
+    nonce: terms.depositNonceHex,
+    value: amount,
+  };
   // Same `as any` the proven devnet scripts use (full-lifecycle.ts, timeout-lifecycle.ts) —
   // encodeShieldedCoinInfo's declared return type doesn't match its actual runtime shape here.
-  const depositedCoinEncoded = encodeShieldedCoinInfo(depositedCoinSdk) as any;
+  const depositedCoinEncoded = encodeShieldedCoinInfo(handBuiltCoin) as any;
+  const depositSalt = hexToBytes(terms.depositSaltHex);
 
   const privateState: EscrowPrivateState = {
     ...emptyEscrowPrivateState,
     depositedCoin: {
-      nonce: hexToBytes(depositedCoinEncoded.nonce ?? depositedCoinSdk.nonce),
+      nonce: hexToBytes(depositedCoinEncoded.nonce ?? terms.depositNonceHex),
       color: hexToBytes(depositedCoinEncoded.color),
       value: amount,
     },
@@ -458,25 +477,30 @@ export async function claimDeal(ctx: AgentContext, contractAddress: string): Pro
   if (ctx.role !== 'seller') throw new Error('claimPayout() is only callable by the seller role in this agent.');
 
   const previous = loadDealPrivateState(ctx.db, contractAddress);
-  if (!previous?.sellerAddress || !previous.sellerAddressSalt || !previous.counterpartyMemoPublicKey) {
+  if (!previous?.sellerAddress || !previous.sellerAddressSalt || !previous.depositNonce || !previous.depositSalt) {
     throw new Error('No prior propose() state found for this deal on this agent — cannot claim.');
   }
 
-  const currentState = ledger((await ctx.providers.publicDataProvider.queryContractState(contractAddress))!.data);
-  const recovered = recoverBuyerMemo(
-    currentState.buyerMemo,
-    hexToBytes(ctx.identity.memoKeyPair.privateKey),
-    previous.counterpartyMemoPublicKey
-  );
+  // AGENTS.md 5.36 (Discord finding #3 fix) — no more buyerMemo decryption. The seller
+  // already knows the real coin's nonce+salt (it chose them itself at propose() time) and
+  // its value (the agreed amount) — rebuild the exact same encoded coin lockEscrow() used.
+  const amount = BigInt(previous.agreedAmount!);
+  const sellerCoin: ShieldedCoinInfo = {
+    type: shieldedToken().raw,
+    nonce: Buffer.from(previous.depositNonce).toString('hex'),
+    value: amount,
+  };
+  const sellerCoinEncoded = encodeShieldedCoinInfo(sellerCoin) as any;
 
   const mtIndex = await resolveMtIndex(ctx, contractAddress, 'deposited');
-  // BigInt(...) applied explicitly — see releaseTimeoutDeal's matching comment below for why
-  // (found there that a loaded coin value can come back as a plain string; cheap, safe either
-  // way here too).
   const privateState: EscrowPrivateState = {
     ...previous,
-    qualifiedCoin: { ...recovered.coin, value: BigInt(recovered.coin.value), mt_index: mtIndex },
-    depositSalt: recovered.depositSalt,
+    qualifiedCoin: {
+      nonce: hexToBytes(sellerCoinEncoded.nonce ?? sellerCoin.nonce),
+      color: hexToBytes(sellerCoinEncoded.color),
+      value: amount,
+      mt_index: mtIndex,
+    },
   };
 
   // findDeployedContract MUST run before privateStateProvider.set() — exactly the ordering
@@ -507,7 +531,7 @@ export async function claimDeal(ctx: AgentContext, contractAddress: string): Pro
   });
   const result = await contract.callTx.claimPayout();
   logAction(ctx, contractAddress, 'claimPayout', {
-    amount: recovered.coin.value.toString(),
+    amount: amount.toString(),
     currency: 'NIGHT',
     txId: result.public.txId,
   });
@@ -579,24 +603,29 @@ async function releaseTimeoutAsBuyer(ctx: AgentContext, contractAddress: string)
 
 async function releaseTimeoutAsSeller(ctx: AgentContext, contractAddress: string): Promise<{ txId: string }> {
   const previous = loadDealPrivateState(ctx.db, contractAddress);
-  if (!previous?.sellerAddress || !previous.sellerAddressSalt || !previous.counterpartyMemoPublicKey) {
+  if (!previous?.sellerAddress || !previous.sellerAddressSalt || !previous.depositNonce || !previous.depositSalt) {
     throw new Error('No prior propose() state found for this deal on this agent — cannot release.');
   }
 
-  // Same buyerMemo recovery as claimDeal — the seller never held the deposited coin directly,
-  // only the buyer did (at lockEscrow time); it travels on-chain only as this encrypted memo.
-  const currentState = ledger((await ctx.providers.publicDataProvider.queryContractState(contractAddress))!.data);
-  const recovered = recoverBuyerMemo(
-    currentState.buyerMemo,
-    hexToBytes(ctx.identity.memoKeyPair.privateKey),
-    previous.counterpartyMemoPublicKey
-  );
+  // AGENTS.md 5.36 (Discord finding #3 fix) — same as claimDeal: the seller already knows
+  // the real coin (it chose nonce+salt itself at propose() time), no buyerMemo needed.
+  const amount = BigInt(previous.agreedAmount!);
+  const sellerCoin: ShieldedCoinInfo = {
+    type: shieldedToken().raw,
+    nonce: Buffer.from(previous.depositNonce).toString('hex'),
+    value: amount,
+  };
+  const sellerCoinEncoded = encodeShieldedCoinInfo(sellerCoin) as any;
 
   const mtIndex = await resolveMtIndex(ctx, contractAddress, 'deposited');
   const privateState: EscrowPrivateState = {
     ...previous,
-    qualifiedCoin: { ...recovered.coin, value: BigInt(recovered.coin.value), mt_index: mtIndex },
-    depositSalt: recovered.depositSalt,
+    qualifiedCoin: {
+      nonce: hexToBytes(sellerCoinEncoded.nonce ?? sellerCoin.nonce),
+      color: hexToBytes(sellerCoinEncoded.color),
+      value: amount,
+      mt_index: mtIndex,
+    },
   };
 
   await findDeployedContract(ctx.providers, {
@@ -616,7 +645,7 @@ async function releaseTimeoutAsSeller(ctx: AgentContext, contractAddress: string
   });
   const result = await contract.callTx.releaseOnTimeout();
   logAction(ctx, contractAddress, 'releaseOnTimeout', {
-    amount: recovered.coin.value.toString(),
+    amount: amount.toString(),
     currency: 'NIGHT',
     txId: result.public.txId,
   });
@@ -641,6 +670,46 @@ export interface DealStatus {
    * between companies or written anywhere public.
    */
   ownRecord: Array<{ action: string; amount: string | null; currency: string | null; timestamp: number }>;
+  /**
+   * AGENTS.md 5.36 (Discord finding #3 fix, Fix B) — seller-only, defense-in-depth. `null`
+   * before `Locked` (nothing to check yet) or on a non-seller agent (nothing to compare
+   * against); `true`/`false` once Locked, from `verifyDepositCommitment` below. This is
+   * NOT the primary defense (depositParamsCommitment's on-chain assert already makes a
+   * mismatch impossible to lock in the first place) — it's a second, independent check in
+   * case that contract logic itself has a bug this didn't anticipate. The panel surfaces
+   * this as the actual "safe to ship" signal.
+   */
+  depositVerified: boolean | null;
+}
+
+/**
+ * AGENTS.md 5.36 Fix B — the seller independently recomputes `heldCommitment` from data it
+ * already knows (its own propose()-time depositNonce/depositSalt + the agreed amount), with
+ * no witness/proof involved, and compares against the live on-chain value. Should always be
+ * true once Locked (depositParamsCommitment's on-chain assert already guarantees it) — a
+ * `false` here would mean a real bug in that on-chain logic, not a buyer attack.
+ */
+export async function verifyDepositCommitment(ctx: AgentContext, contractAddress: string): Promise<boolean> {
+  const previous = loadDealPrivateState(ctx.db, contractAddress);
+  if (!previous?.depositNonce || !previous.depositSalt || previous.agreedAmount === null) {
+    throw new Error('No prior propose() state with deposit params found for this deal on this agent.');
+  }
+  const state = ledger((await ctx.providers.publicDataProvider.queryContractState(contractAddress))!.data);
+  const sellerCoin: ShieldedCoinInfo = {
+    type: shieldedToken().raw,
+    nonce: Buffer.from(previous.depositNonce).toString('hex'),
+    value: previous.agreedAmount,
+  };
+  const sellerCoinEncoded = encodeShieldedCoinInfo(sellerCoin) as any;
+  const recomputed = computeHeldCommitment(
+    {
+      nonce: hexToBytes(sellerCoinEncoded.nonce ?? sellerCoin.nonce),
+      color: hexToBytes(sellerCoinEncoded.color),
+      value: previous.agreedAmount,
+    },
+    previous.depositSalt
+  );
+  return Buffer.from(recomputed).equals(Buffer.from(state.heldCommitment));
 }
 
 export async function getDealStatus(ctx: AgentContext, contractAddress: string): Promise<DealStatus | null> {
@@ -650,6 +719,14 @@ export async function getDealStatus(ctx: AgentContext, contractAddress: string):
   const ownRecord = queryTransactions(ctx.txLog, { module: 'incoterms-escrow', dealRef: contractAddress }).map(
     (row) => ({ action: row.action, amount: row.amount, currency: row.currency, timestamp: row.timestamp })
   );
+  let depositVerified: boolean | null = null;
+  if (ctx.role === 'seller' && Number(state.state) >= 2 /* Locked or later */) {
+    try {
+      depositVerified = await verifyDepositCommitment(ctx, contractAddress);
+    } catch {
+      depositVerified = null; // no local record to check against (e.g. different agent instance)
+    }
+  }
   return {
     contractAddress,
     state: Number(state.state),
@@ -657,6 +734,7 @@ export async function getDealStatus(ctx: AgentContext, contractAddress: string):
     deadlineTimestamp: Number(state.deadlineTimestamp),
     timeoutDirection: Number(state.timeoutDirection) === 0 ? 'buyer' : 'seller',
     ownRecord,
+    depositVerified,
   };
 }
 
