@@ -20,8 +20,8 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { createKeystore, NetworkId } from '@midnight-ntwrk/wallet-sdk';
 import { startSettlementAgent } from '../../src/server/index.js';
-import { loadOrCreateSettlementIdentity } from '../../src/server/identity.js';
 import { UndeployedNetworkConfig } from '../../src/deploy/networks.js';
 import { buildAgentWallet, closeAgentWallet } from '../../src/deploy/wallet.js';
 import { shieldFundsFromGenesis, fundUnshieldedAndRegisterDust } from './lifecycle-helpers.js';
@@ -32,25 +32,42 @@ const WATCHER_INTERVAL_MS = 5_000;
 
 type Role = 'seller' | 'buyer' | 'port-authority';
 
-function signHashHex(hashHex: string, privateKeyPem: string): string {
-  return crypto.sign(null, Buffer.from(hashHex, 'hex'), { key: privateKeyPem, dsaEncoding: 'ieee-p1363' }).toString('base64');
-}
-
 interface AgentHandle {
   role: Role;
   baseUrl: string;
   sessionToken: string;
 }
 
-async function login(baseUrl: string, secretsDir: string, role: Role): Promise<string> {
-  const identity = loadOrCreateSettlementIdentity(secretsDir, role, PASSPHRASE);
+/**
+ * auth.ts's challenge-response now requires a REAL Midnight wallet-style signature (the
+ * DApp Connector model — 1AM/Lace in production), verified via @midnight-ntwrk/ledger-v8's
+ * verifySignature. The old agent-generated `identity.loginKeyPair` this used to sign with
+ * doesn't exist anymore (removed when auth.ts was rewritten, 2026-08-30) — this script was
+ * never updated to match, and crashed here with "Cannot read properties of undefined
+ * (reading 'privateKey')" until fixed.
+ *
+ * Login is a separate "operator" identity from the agent's own role wallet (buyer/seller/
+ * port-authority) — auth.ts's own model TOFU-bootstraps whichever key logs in first as the
+ * permanent operator, so any valid unshielded keystore works here; a throwaway one generated
+ * fresh per run is fine (this script never logs in twice for the same role, so there's no
+ * "must match the previously-bootstrapped key" concern). `createKeystore` is the same
+ * synchronous, local, no-network-needed primitive lifecycle-helpers.ts's funding flow already
+ * uses via `agent.unshieldedKeystore` — just not tied to a funded on-chain wallet here.
+ */
+async function login(baseUrl: string, role: Role): Promise<string> {
+  const operatorKeystore = createKeystore(new Uint8Array(crypto.randomBytes(32)), NetworkId.Undeployed);
   const challengeRes = await fetch(`${baseUrl}/auth/challenge`, { method: 'POST' });
   const { challengeId, nonceHex } = (await challengeRes.json()) as { challengeId: string; nonceHex: string };
-  const signature = signHashHex(nonceHex, identity.loginKeyPair.privateKey);
+  const signature = operatorKeystore.signData(Buffer.from(nonceHex, 'hex'));
   const verifyRes = await fetch(`${baseUrl}/auth/verify`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ challengeId, signature }),
+    body: JSON.stringify({
+      challengeId,
+      signature,
+      signedDataHex: nonceHex,
+      verifyingKey: operatorKeystore.getPublicKey(),
+    }),
   });
   if (!verifyRes.ok) throw new Error(`login failed for ${role}: ${verifyRes.status} ${await verifyRes.text()}`);
   const { sessionToken } = (await verifyRes.json()) as { sessionToken: string };
@@ -140,17 +157,17 @@ async function main(): Promise<void> {
     const seller: AgentHandle = {
       role: 'seller',
       baseUrl: 'http://127.0.0.1:4100',
-      sessionToken: await login('http://127.0.0.1:4100', path.join(tmpRoot, 'seller-secrets'), 'seller'),
+      sessionToken: await login('http://127.0.0.1:4100', 'seller'),
     };
     const buyer: AgentHandle = {
       role: 'buyer',
       baseUrl: 'http://127.0.0.1:4101',
-      sessionToken: await login('http://127.0.0.1:4101', path.join(tmpRoot, 'buyer-secrets'), 'buyer'),
+      sessionToken: await login('http://127.0.0.1:4101', 'buyer'),
     };
     const portAuthority: AgentHandle = {
       role: 'port-authority',
       baseUrl: 'http://127.0.0.1:4102',
-      sessionToken: await login('http://127.0.0.1:4102', path.join(tmpRoot, 'port-authority-secrets'), 'port-authority'),
+      sessionToken: await login('http://127.0.0.1:4102', 'port-authority'),
     };
     console.log('  All three logged in, session tokens issued.');
 
