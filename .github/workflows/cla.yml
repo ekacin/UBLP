@@ -22,7 +22,10 @@ jobs:
           PERSONAL_ACCESS_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
         with:
           path-to-signatures: 'signatures/version1/cla.json'
-          empty-commit-fills-cla: 'true'
-          branch: 'main'
+          # Dedicated, UNPROTECTED branch for the bot's own signature-file commits — `main`
+          # has a branch-protection rule requiring PRs, which blocks the bot's direct push
+          # (confirmed live: "Could not create file: Changes must be made through a pull
+          # request"). This branch holds nothing else and never needs protecting.
+          branch: 'cla-signatures'
           path-to-document: 'https://github.com/ekacin/UBLP/blob/main/CLA.md'
           allowlist: 'ekacin,bot-*'
