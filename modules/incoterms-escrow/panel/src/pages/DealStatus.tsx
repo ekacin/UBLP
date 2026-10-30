@@ -64,7 +64,10 @@ const DealStatus: React.FC<DealStatusProps> = ({ contractAddress, role, onClose 
 
   const expired = !!status && status.deadlineTimestamp > 0 && now > status.deadlineTimestamp * 1000;
   const canAttest = role === 'port-authority' && status?.state === 2 && !status.milestoneConfirmed;
-  const canClaim = role === 'seller' && status?.state === 2 && status.milestoneConfirmed;
+  // AGENTS.md 5.36 Fix B — never let the operator collect payment while the seller's own
+  // independent recomputation of heldCommitment disagrees with the on-chain value.
+  const depositMismatch = status?.depositVerified === false;
+  const canClaim = role === 'seller' && status?.state === 2 && status.milestoneConfirmed && !depositMismatch;
   const canReleaseTimeout =
     !!status &&
     status.state === 2 &&
@@ -125,6 +128,14 @@ const DealStatus: React.FC<DealStatusProps> = ({ contractAddress, role, onClose 
             <dt>Timeout pays out to</dt>
             <dd>{status.timeoutDirection}</dd>
           </dl>
+        )}
+
+        {depositMismatch && (
+          <div className="alert alert-error" role="alert">
+            Deposit verification failed: this agent's own recomputed coin commitment does not
+            match the on-chain value. Collecting payment is disabled until this is resolved —
+            see the agent's logs for details (AGENTS.md 5.36).
+          </div>
         )}
 
         {(canAttest || canClaim || canReleaseTimeout) && (

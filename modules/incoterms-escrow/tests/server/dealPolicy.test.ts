@@ -12,6 +12,7 @@ function baseStatus(overrides: Partial<DealStatus> = {}): DealStatus {
     milestoneConfirmed: false,
     deadlineTimestamp: 1_000_000,
     timeoutDirection: 'buyer',
+    depositVerified: null,
     ...overrides,
   };
 }
@@ -32,6 +33,21 @@ describe('shouldAutoClaimDeal', () => {
 
   it('is false once the deal has already moved past Locked (already Released)', () => {
     expect(shouldAutoClaimDeal('seller', baseStatus({ milestoneConfirmed: true, state: RELEASED }))).toBe(false);
+  });
+
+  it('is false when depositVerified is explicitly false (AGENTS.md 5.36 Fix B — never auto-act on a mismatch)', () => {
+    expect(
+      shouldAutoClaimDeal('seller', baseStatus({ milestoneConfirmed: true, depositVerified: false }))
+    ).toBe(false);
+  });
+
+  it('is unaffected by depositVerified being null or true', () => {
+    expect(
+      shouldAutoClaimDeal('seller', baseStatus({ milestoneConfirmed: true, depositVerified: null }))
+    ).toBe(true);
+    expect(
+      shouldAutoClaimDeal('seller', baseStatus({ milestoneConfirmed: true, depositVerified: true }))
+    ).toBe(true);
   });
 });
 
@@ -71,6 +87,16 @@ describe('shouldAutoReleaseTimeout', () => {
   it('is false once the deal has already moved past Locked (already Released)', () => {
     expect(
       shouldAutoReleaseTimeout('buyer', baseStatus({ deadlineTimestamp: now - 1, state: RELEASED }), now)
+    ).toBe(false);
+  });
+
+  it('is false for the seller branch when depositVerified is explicitly false (AGENTS.md 5.36 Fix B)', () => {
+    expect(
+      shouldAutoReleaseTimeout(
+        'seller',
+        baseStatus({ deadlineTimestamp: now - 1, timeoutDirection: 'seller', depositVerified: false }),
+        now
+      )
     ).toBe(false);
   });
 });

@@ -99,6 +99,10 @@ export interface DealStatus {
   /** This company's own bookkeeping for this deal — never the chain, which never stores the
    * amount in plaintext. See server/actions.ts's DealStatus.ownRecord doc comment. */
   ownRecord: Array<{ action: string; amount: string | null; currency: string | null; timestamp: number }>;
+  /** AGENTS.md 5.36 Fix B — seller-only defense-in-depth check. `null` before Locked, or if
+   * this agent isn't the seller; `true`/`false` once Locked. See server/actions.ts's
+   * DealStatus.depositVerified doc comment. */
+  depositVerified: boolean | null;
 }
 
 export interface PendingAction {

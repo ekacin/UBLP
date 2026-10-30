@@ -477,7 +477,13 @@ export async function claimDeal(ctx: AgentContext, contractAddress: string): Pro
   if (ctx.role !== 'seller') throw new Error('claimPayout() is only callable by the seller role in this agent.');
 
   const previous = loadDealPrivateState(ctx.db, contractAddress);
-  if (!previous?.sellerAddress || !previous.sellerAddressSalt || !previous.depositNonce || !previous.depositSalt) {
+  if (
+    !previous?.sellerAddress ||
+    !previous.sellerAddressSalt ||
+    !previous.depositNonce ||
+    !previous.depositSalt ||
+    previous.agreedAmount === null
+  ) {
     throw new Error('No prior propose() state found for this deal on this agent — cannot claim.');
   }
 
@@ -603,7 +609,13 @@ async function releaseTimeoutAsBuyer(ctx: AgentContext, contractAddress: string)
 
 async function releaseTimeoutAsSeller(ctx: AgentContext, contractAddress: string): Promise<{ txId: string }> {
   const previous = loadDealPrivateState(ctx.db, contractAddress);
-  if (!previous?.sellerAddress || !previous.sellerAddressSalt || !previous.depositNonce || !previous.depositSalt) {
+  if (
+    !previous?.sellerAddress ||
+    !previous.sellerAddressSalt ||
+    !previous.depositNonce ||
+    !previous.depositSalt ||
+    previous.agreedAmount === null
+  ) {
     throw new Error('No prior propose() state found for this deal on this agent — cannot release.');
   }
 
@@ -683,33 +695,54 @@ export interface DealStatus {
 }
 
 /**
- * AGENTS.md 5.36 Fix B — the seller independently recomputes `heldCommitment` from data it
- * already knows (its own propose()-time depositNonce/depositSalt + the agreed amount), with
- * no witness/proof involved, and compares against the live on-chain value. Should always be
- * true once Locked (depositParamsCommitment's on-chain assert already guarantees it) — a
- * `false` here would mean a real bug in that on-chain logic, not a buyer attack.
+ * AGENTS.md 5.36 Fix B's actual math — pure, synchronous, no network I/O — shared by
+ * `verifyDepositCommitment` (standalone callers, does its own fetch) and `getDealStatus`
+ * (already has `heldCommitment` from its own fetch, so passes it straight in instead of
+ * fetching a second time). Pulled out after a code review of the original commit found both
+ * callers duplicating this and `getDealStatus` doing a redundant second
+ * `queryContractState` call.
  */
-export async function verifyDepositCommitment(ctx: AgentContext, contractAddress: string): Promise<boolean> {
-  const previous = loadDealPrivateState(ctx.db, contractAddress);
-  if (!previous?.depositNonce || !previous.depositSalt || previous.agreedAmount === null) {
+export function computeDepositVerification(previous: EscrowPrivateState, heldCommitment: Uint8Array): boolean {
+  if (!previous.depositNonce || !previous.depositSalt || previous.agreedAmount === null) {
     throw new Error('No prior propose() state with deposit params found for this deal on this agent.');
   }
-  const state = ledger((await ctx.providers.publicDataProvider.queryContractState(contractAddress))!.data);
+  // BigInt(...) applied explicitly — same defensive coercion claimDeal/releaseTimeoutAsSeller
+  // already use. Found live (2026-10-30, via this function's own new error logging — see
+  // AGENTS.md): a loaded deal_private_state row can come back with agreedAmount as a plain
+  // decimal STRING rather than a bigint, the same class of bug already documented elsewhere
+  // in this file. A no-op on an already-correct bigint, safe either way.
+  const amount = BigInt(previous.agreedAmount);
   const sellerCoin: ShieldedCoinInfo = {
     type: shieldedToken().raw,
     nonce: Buffer.from(previous.depositNonce).toString('hex'),
-    value: previous.agreedAmount,
+    value: amount,
   };
   const sellerCoinEncoded = encodeShieldedCoinInfo(sellerCoin) as any;
   const recomputed = computeHeldCommitment(
     {
       nonce: hexToBytes(sellerCoinEncoded.nonce ?? sellerCoin.nonce),
       color: hexToBytes(sellerCoinEncoded.color),
-      value: previous.agreedAmount,
+      value: amount,
     },
     previous.depositSalt
   );
-  return Buffer.from(recomputed).equals(Buffer.from(state.heldCommitment));
+  return Buffer.from(recomputed).equals(Buffer.from(heldCommitment));
+}
+
+/**
+ * AGENTS.md 5.36 Fix B — the seller independently recomputes `heldCommitment` from data it
+ * already knows (its own propose()-time depositNonce/depositSalt + the agreed amount), with
+ * no witness/proof involved, and compares against the live on-chain value. Should always be
+ * true once Locked (depositParamsCommitment's on-chain assert already guarantees it) — a
+ * `false` here would mean a real bug in that on-chain logic, not a buyer attack. Standalone
+ * entry point (does its own fetch) — `getDealStatus` below calls `computeDepositVerification`
+ * directly instead, reusing the state it already fetched.
+ */
+export async function verifyDepositCommitment(ctx: AgentContext, contractAddress: string): Promise<boolean> {
+  const previous = loadDealPrivateState(ctx.db, contractAddress);
+  if (!previous) throw new Error('No prior propose() state found for this deal on this agent.');
+  const state = ledger((await ctx.providers.publicDataProvider.queryContractState(contractAddress))!.data);
+  return computeDepositVerification(previous, state.heldCommitment);
 }
 
 export async function getDealStatus(ctx: AgentContext, contractAddress: string): Promise<DealStatus | null> {
@@ -719,12 +752,25 @@ export async function getDealStatus(ctx: AgentContext, contractAddress: string):
   const ownRecord = queryTransactions(ctx.txLog, { module: 'incoterms-escrow', dealRef: contractAddress }).map(
     (row) => ({ action: row.action, amount: row.amount, currency: row.currency, timestamp: row.timestamp })
   );
+  // A code review of the original commit found this collapsing EVERY failure mode — a real
+  // bug in the computation included — into the same `null` as "nothing to check yet" (buyer
+  // role, or pre-Locked state). Split those apart: `previous` genuinely missing is the only
+  // benign case; anything computeDepositVerification itself throws is logged loudly and
+  // reported as `false` (fail-closed — "couldn't confirm this is safe" must never look like
+  // "nothing to worry about").
   let depositVerified: boolean | null = null;
   if (ctx.role === 'seller' && Number(state.state) >= 2 /* Locked or later */) {
-    try {
-      depositVerified = await verifyDepositCommitment(ctx, contractAddress);
-    } catch {
-      depositVerified = null; // no local record to check against (e.g. different agent instance)
+    const previous = loadDealPrivateState(ctx.db, contractAddress);
+    if (previous) {
+      try {
+        depositVerified = computeDepositVerification(previous, state.heldCommitment);
+      } catch (err) {
+        console.error(
+          `[getDealStatus] deposit-commitment verification threw unexpectedly for ${contractAddress} — treating as unverified:`,
+          err
+        );
+        depositVerified = false;
+      }
     }
   }
   return {
