@@ -29,3 +29,18 @@ jobs:
           branch: 'cla-signatures'
           path-to-document: 'https://github.com/ekacin/UBLP/blob/main/CLA.md'
           allowlist: 'ekacin,bot-*'
+          # The tool's default message buries the actual required action (a specific
+          # comment, no link/button exists) inside a lot of boilerplate text — this puts it
+          # first and makes it visually unmissable.
+          custom-notsigned-prcomment: |
+            ## 📝 Action required before this can be merged
+
+            Please post the **exact line below** as a new comment on this pull request:
+
+            ```
+            I have read the CLA Document and I hereby sign the CLA
+            ```
+
+            There is no link or button to click — commenting that exact sentence is the
+            signature. Full agreement: [CLA.md](https://github.com/ekacin/UBLP/blob/main/CLA.md)
+          custom-allsigned-prcomment: '✅ All contributors have signed the CLA.'
